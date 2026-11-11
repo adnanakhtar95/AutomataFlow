@@ -1,0 +1,44 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+artifacts/
+publish/
+TestResults/
+
+# IDE
+.vs/
+.vscode/*
+!.vscode/extensions.json
+*.user
+*.suo
+.idea/
+
+# Secrets and local configuration - never commit
+.env
+.env.*
+!.env.example
+*.pfx
+*.key
+secrets.json
+appsettings.Local.json
+appsettings.*.local.json
+
+# Local runtime data
+*.log
+*.db
+*.db-shm
+*.db-wal
+/data/
+/storage/
+
+# Node / frontend
+node_modules/
+web/**/dist/
+
+# Playwright downloads and traces
+.playwright/
+playwright-report/
+test-results/
+*.trace.zip

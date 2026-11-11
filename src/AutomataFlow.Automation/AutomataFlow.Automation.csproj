@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\AutomataFlow.Domain\AutomataFlow.Domain.csproj" />
+    <ProjectReference Include="..\AutomataFlow.Application\AutomataFlow.Application.csproj" />
+  </ItemGroup>
+</Project>

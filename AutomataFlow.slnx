@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AutomataFlow.Api/AutomataFlow.Api.csproj" />
+    <Project Path="src/AutomataFlow.Application/AutomataFlow.Application.csproj" />
+    <Project Path="src/AutomataFlow.Automation/AutomataFlow.Automation.csproj" />
+    <Project Path="src/AutomataFlow.Domain/AutomataFlow.Domain.csproj" />
+    <Project Path="src/AutomataFlow.Infrastructure/AutomataFlow.Infrastructure.csproj" />
+    <Project Path="src/AutomataFlow.Worker/AutomataFlow.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AutomataFlow.AutomationTests/AutomataFlow.AutomationTests.csproj" />
+    <Project Path="tests/AutomataFlow.IntegrationTests/AutomataFlow.IntegrationTests.csproj" />
+    <Project Path="tests/AutomataFlow.UnitTests/AutomataFlow.UnitTests.csproj" />
+  </Folder>
+</Solution>
