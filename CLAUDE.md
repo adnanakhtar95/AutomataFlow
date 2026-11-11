@@ -24,6 +24,7 @@ web/   automataflow-web/        (React dashboard)
 tests/ AutomataFlow.UnitTests | .IntegrationTests | .AutomationTests | DemoCrm.Tests
 deploy/ (docker compose, Dockerfiles, .env.example)      docs/
 ```
+DemoCrm boundary (ADR-027): only DemoCrm.Tests and AutomataFlow.AutomationTests may reference DemoCrm; no production project may depend on it, directly or transitively. The DemoCrm reset token comes only from the environment variable DemoCrm__ControlApi__Token (ADR-028); never commit it.
 Dependency rule: Domain <- Application <- (Infrastructure, Automation) <- (Api, Worker). Domain references nothing. Application never references Infrastructure, Automation, Api or Worker. **Api must never reference Automation (directly or transitively); Infrastructure and Automation never reference each other.** An architecture test enforces this. See ARCHITECTURE.md for the full reference table.
 
 ## Mandatory development rules

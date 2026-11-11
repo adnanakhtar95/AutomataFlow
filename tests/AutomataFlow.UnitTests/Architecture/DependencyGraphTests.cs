@@ -99,6 +99,56 @@ public class DependencyGraphTests
         Assert.Equal(["DemoCrm"], Graph.DirectReferences("DemoCrm.Tests"));
     }
 
+    // ---- DemoCrm boundary (ADR-027) ----
+    // DemoCrm is a browser-automation TARGET. Exactly two test projects may reference it:
+    //   DemoCrm.Tests               - tests the portal itself
+    //   AutomataFlow.AutomationTests - builds and launches it as a real-browser test target (Phase 3)
+    // No production AutomataFlow project (and no other test project) may ever depend on it.
+
+    private static readonly string[] ProjectsAllowedToReferenceDemoCrm = ["AutomataFlow.AutomationTests", "DemoCrm.Tests"];
+
+    [Fact]
+    public void Only_DemoCrm_Tests_and_AutomationTests_may_reference_DemoCrm()
+    {
+        var referencing = Graph.Projects
+            .Where(p => !string.Equals(p, "DemoCrm", StringComparison.Ordinal))
+            .Where(p => Graph.DirectReferences(p).Contains("DemoCrm"))
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        Assert.All(referencing, p => Assert.Contains(p, ProjectsAllowedToReferenceDemoCrm));
+    }
+
+    [Fact]
+    public void No_production_project_depends_on_DemoCrm_directly_or_transitively()
+    {
+        var production = Graph.Projects.Where(p => !p.EndsWith("Tests", StringComparison.Ordinal) && p != "DemoCrm");
+
+        Assert.All(production, p => Assert.DoesNotContain("DemoCrm", Graph.TransitiveReferences(p)));
+    }
+
+    [Fact]
+    public void Unit_and_integration_tests_never_reference_DemoCrm()
+    {
+        Assert.DoesNotContain("DemoCrm", Graph.TransitiveReferences("AutomataFlow.UnitTests"));
+        Assert.DoesNotContain("DemoCrm", Graph.TransitiveReferences("AutomataFlow.IntegrationTests"));
+    }
+
+    [Fact]
+    public void AutomationTests_may_reference_only_Automation_and_DemoCrm()
+    {
+        var allowed = new[] { "AutomataFlow.Automation", "DemoCrm" };
+
+        Assert.All(Graph.DirectReferences("AutomataFlow.AutomationTests"), r => Assert.Contains(r, allowed));
+        Assert.Contains("AutomataFlow.Automation", Graph.DirectReferences("AutomataFlow.AutomationTests"));
+    }
+
+    [Fact]
+    public void DemoCrm_tests_never_reference_any_AutomataFlow_project()
+    {
+        Assert.DoesNotContain(Graph.TransitiveReferences("DemoCrm.Tests"), p => p.StartsWith("AutomataFlow", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void Only_Api_and_Worker_reference_Infrastructure_among_source_projects()
     {

@@ -22,6 +22,17 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 
+# The reset/state control API stays disabled unless DemoCrm__ControlApi__Token is set. Use the value from the
+# environment if present; otherwise generate a random one for this run (nothing is stored or committed).
+if ([string]::IsNullOrEmpty($env:DemoCrm__ControlApi__Token)) {
+    $bytes = New-Object byte[] 24
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    $rng.GetBytes($bytes)
+    $rng.Dispose()
+    $env:DemoCrm__ControlApi__Token = [Convert]::ToBase64String($bytes).Replace('+', '-').Replace('/', '_').TrimEnd('=')
+    Write-Host "Control API token for this run (header X-Demo-Control-Token): $($env:DemoCrm__ControlApi__Token)"
+}
+
 $script = @'
 set -e
 mkdir /work && cd /src
@@ -38,6 +49,7 @@ docker run --rm $mode --name $Name `
     -e DOTNET_CLI_TELEMETRY_OPTOUT=1 -e DOTNET_NOLOGO=1 `
     -e ASPNETCORE_ENVIRONMENT=Development `
     -e ASPNETCORE_URLS=http://0.0.0.0:5080 `
+    -e DemoCrm__ControlApi__Token `
     $Image bash -c $script
 
 exit $LASTEXITCODE

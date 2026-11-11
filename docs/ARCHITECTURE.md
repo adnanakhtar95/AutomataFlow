@@ -28,7 +28,7 @@ AutomataFlow/
 │  ├─ AutomataFlow.Automation/
 │  ├─ AutomataFlow.Api/
 │  ├─ AutomataFlow.Worker/
-│  └─ DemoCrm/                 ASP.NET Core Razor Pages app; fully separate from Api and web; own store (SQLite or in-memory); no reference to any AutomataFlow project
+│  └─ DemoCrm/                 ASP.NET Core Razor Pages app; fully separate from Api and web; thread-safe in-memory store (ADR-024); no reference to any AutomataFlow project
 ├─ web/
 │  └─ automataflow-web/        React + TS + Vite + Tailwind
 └─ tests/
@@ -56,7 +56,7 @@ Reference rules:
 - Api does **not** reference Automation (it cannot run browsers). Enforced by project references and an architecture test.
 - Api and Worker are the only projects that reference Infrastructure.
 
-Test projects: UnitTests → Domain, Application, Automation (pure logic). IntegrationTests → Api, Infrastructure (Testcontainers is Apache-2.0/MIT and free; requires Docker, which is available — or a dedicated test database). AutomationTests → Automation + DemoCrm (real Chromium against the demo app).
+Test projects: UnitTests → Domain, Application, Automation (pure logic). IntegrationTests → Api, Infrastructure (Testcontainers is Apache-2.0/MIT and free; requires Docker, which is available — or a dedicated test database). AutomationTests → Automation + DemoCrm (real Chromium against the demo app; the DemoCrm edge exists exclusively to build and launch it as a browser test target, and only DemoCrm.Tests and AutomationTests may reference DemoCrm — ADR-027, enforced by architecture tests).
 
 ## 4. Workflow engine (Automation + Domain)
 

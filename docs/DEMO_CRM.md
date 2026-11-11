@@ -9,7 +9,7 @@ DemoCrm is an ASP.NET Core Razor Pages portal that AutomataFlow will automate wi
 .\scripts\run-demo-crm.ps1            # foreground, http://localhost:5080 (Ctrl+C to stop)
 .\scripts\run-demo-crm.ps1 -Detach    # background; stop with: docker stop democrm-demo
 ```
-The script runs DemoCrm in the official .NET 10 SDK Linux container (Smart App Control blocks local unsigned builds on the dev machine). The port is published on loopback only. Development environment settings apply, including the control token below.
+The script runs DemoCrm in the official .NET 10 SDK Linux container (Smart App Control blocks local unsigned builds on the dev machine). The port is published on loopback only. It passes `DemoCrm__ControlApi__Token` into the container (see "Resetting the demo data"); if the variable is not set in your shell the script generates a random one for the run and prints it.
 
 ## Credentials (local demonstration only)
 | Email | Password |
@@ -83,7 +83,11 @@ Triggered by a plus-tag in the email local part (valid emails only; validation r
 
 ## Resetting the demo data
 - **UI:** `/Admin` -> "Reset demo data" (signed-in, antiforgery-protected POST). Shows a confirmation message.
-- **Machine:** `POST /demo/reset` with header `X-Demo-Control-Token`; `GET /demo/state` returns `{customerCount, seededCount, simulatedAddresses}`. Both return 404 unless `DemoCrm:ControlApi:Token` is configured (only `appsettings.Development.json` sets one: `local-demo-control-token`) and 401 for a wrong token (constant-time comparison). State exposes counts only, never customer data.
+- **Machine:** `POST /demo/reset` with header `X-Demo-Control-Token`; `GET /demo/state` returns `{customerCount, seededCount, simulatedAddresses}`. State exposes counts only, never customer data.
+  - **Token source:** the environment variable `DemoCrm__ControlApi__Token` (the standard .NET mapping of `__` to `:`, i.e. configuration key `DemoCrm:ControlApi:Token`). No token is stored in any committed file; every `appsettings*.json` keeps it empty, and a test enforces that.
+  - **Disabled by default:** with the variable missing or empty both endpoints return **404**. A missing or wrong header returns **401** (constant-time comparison).
+  - **Set it:** PowerShell `$env:DemoCrm__ControlApi__Token = '<random value>'`, or let `scripts/run-demo-crm.ps1` generate one per run and print it. Use a long random value, never a reused password.
+  - **Admin UI reset** is a different path: it requires a signed-in user and a valid antiforgery token, and does not use this token.
 - Reset restores the 24 seed customers (ids `C-000001`..`C-000024`) and clears simulation counters. Restarting the process has the same effect, since the store is in memory.
 
 ## Storage

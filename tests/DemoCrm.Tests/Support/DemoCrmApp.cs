@@ -65,11 +65,11 @@ internal sealed partial class DemoCrmApp : IDisposable
 
     private readonly WebApplicationFactory<Program> _factory;
 
-    public DemoCrmApp(string controlToken = ControlToken, bool simulationEnabled = true, int slowDelayMs = 25)
+    public DemoCrmApp(string controlToken = ControlToken, bool simulationEnabled = true, int slowDelayMs = 25, string environment = "Testing")
     {
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
-            builder.UseEnvironment("Testing");
+            builder.UseEnvironment(environment);
             builder.UseSetting("DemoCrm:ControlApi:Token", controlToken);
             builder.UseSetting("DemoCrm:Simulation:Enabled", simulationEnabled ? "true" : "false");
             builder.UseSetting("DemoCrm:Simulation:SlowDelayMs", slowDelayMs.ToString(System.Globalization.CultureInfo.InvariantCulture));
