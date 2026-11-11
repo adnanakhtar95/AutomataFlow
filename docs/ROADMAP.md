@@ -49,6 +49,7 @@ Checklist (approved scope):
 **Exit:** Manual walkthrough works; endpoint tests for validation, duplicate detection, error simulation.
 
 ## Phase 3 — Playwright browser engine
+Detailed plan: `docs/PHASE3_PLAN.md` (proposed, awaiting approval; estimate revised to 6.5 days, range 5.5–7.5).
 - `BrowserManager`/context factory, isolated contexts, tracing and screenshots, download handling.
 - Full SSRF protection per ARCHITECTURE §9.1: guard on all requests (redirects, subresources, frames, popups, WebSockets), service workers blocked, DNS/IP policy, egress-proxy design with a hostile-fixture test suite.
 - Playwright browser install procedure documented/scripted.
