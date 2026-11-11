@@ -194,6 +194,8 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
 - **Result fields** are written at most once per path. This is enforced statically, with a run-time `ResultOverwrite` backstop.
 - **Reconcile fields** are discarded on `notFound`.
 - **Transient failure after a side effect** is reported as `Indeterminate`, with the declared code kept.
+- **Late cancellation:** a cancellation that arrives after the terminal outcome has been set cannot change it; it only shortens how long session cleanup waits.
+- **Accepted consequence:** after a side effect the engine cannot distinguish "failed before saving" from "saved but the response was lost". Failures that happened before anything was saved (e.g. DemoCrm `+fail-N`) therefore also cost one reconciliation pass before the next attempt. That is cheaper than a duplicate business record.
 - **Full table:** docs/PHASE4_PLAN.md section 16.
 
 ## ADR-040 — Workflow sections: setup, reconcile, steps
@@ -219,6 +221,20 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
 - **Types:** `url` parameters are origin-only, https-only outside Development and never private IP literals outside Development. They are usable only as the whole prefix of a navigate URL, and only when the same parameter is listed in `allowedHosts`. `string` parameters can never appear in a URL scheme or authority.
 - **Source:** values come from job configuration, never from records.
 - **Enforcement:** bound URL parameters become `EgressPolicy` rules, and all Phase 3 runtime enforcement then applies unchanged.
+
+## ADR-044 — Sink rules: secrets versus sensitive values
+**Status:** Accepted (user decision during the Phase 4 plan review, 2026-11-12).
+- **Terminology:**
+  - A *secret* is a value from `ISecretProvider` (`{{secret.x}}`).
+  - A *sensitive input* is a record field marked `sensitive: true`.
+  - A *sensitive extract* is an `extract` output marked `sensitive: true`.
+  - A *sensitive value* is any of these, or any resolved template containing one (taint propagation).
+- **Secrets** are accepted **only** in `fill.value`. They are rejected in every other sink, including `select`, condition operands and selectors, because those would allow probing a secret through page behaviour.
+- **Sensitive inputs and extracts** are accepted in `fill.value`, `select` and condition operands. They are rejected in `navigate.url`, `captureResult.fields`, selector values, `screenshot.label` and `upload.file`.
+- **Where enforced:** by the validator, and again at run time.
+- **Logs** never contain sensitive values. Execution events contain no input or output values at all.
+- **Screenshot masking** covers sensitive fills, the Phase 3 built-ins and declared `maskSelectors`. It does not claim to detect every secret a website displays.
+- **Full matrix:** docs/PHASE4_PLAN.md section 5.
 
 ---
 
