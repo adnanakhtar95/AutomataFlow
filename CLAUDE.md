@@ -86,3 +86,10 @@ EF migrations: `dotnet ef migrations add <Name> --project src/AutomataFlow.Infra
 
 ### Windows Smart App Control caveat
 On the primary dev machine Smart App Control is in enforcement mode and blocks freshly built, unsigned assemblies/apphosts ("An Application Control policy has blocked this file"), so `dotnet test` / `dotnet run` on Windows can fail intermittently. This is a machine security policy: do not disable or work around it without the user's explicit decision. Authoritative verification is `scripts/verify-in-container.ps1` (Linux SDK container; source copied, working tree untouched). Test projects use xUnit v2 + VSTest because xUnit v3 requires a native apphost (ADR-021).
+
+### Browser engine rules (Phase 3, docs/BROWSER_ENGINE.md)
+- Since Phase 3 the verification script uses the pinned image `automataflow-verify:pw-<Playwright version>` (ADR-033). It runs non-root with `--init --shm-size=1g` and the seccomp profile `deploy/verify/chromium-seccomp.json`, so the Chromium sandbox is ON (ADR-035). Never use `--no-sandbox`, `--privileged` or `CAP_SYS_ADMIN`.
+- To upgrade Playwright, change the pin in `Directory.Packages.props` only; the image tag follows it and `VersionLockTests` catches any drift.
+- All browser traffic goes through the egress proxy, and the engine fails closed. Never add a code path that launches Chromium or creates a context without the per-session proxy credentials.
+- No script evaluation or injection APIs in Automation (source-scanned). Selectors are typed data.
+- Sensitive values use `InputValue.Sensitive`. Never log raw Playwright exception messages.

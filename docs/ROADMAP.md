@@ -49,11 +49,25 @@ Checklist (approved scope):
 
 ## Phase 3 — Playwright browser engine
 Detailed plan: `docs/PHASE3_PLAN.md` (**approved**, ADR-029). Additional mandatory requirements: fail-closed egress and bypass prevention (ADR-030), policy vs network isolation (ADR-031), artifact security (ADR-032), reproducible verify image (ADR-033). Process: spike first (results in `docs/PHASE3_SPIKE.md`), stop and report if a security assumption fails, then implement.
-- `BrowserManager`/context factory, isolated contexts, tracing and screenshots, download handling.
-- Full SSRF protection per ARCHITECTURE §9.1: guard on all requests (redirects, subresources, frames, popups, WebSockets), service workers blocked, DNS/IP policy, egress-proxy design with a hostile-fixture test suite.
-- Playwright browser install procedure documented/scripted.
-- Hard-coded smoke automation of Demo CRM (throwaway test, not product logic) proving the engine.
-**Exit:** AutomationTests log in and register a customer in real Chromium; disallowed host is blocked; contexts isolated.
+Checklist (docs/PHASE3_PLAN.md acceptance list):
+1. [x] Spike run and recorded (30/30); two safe corrections adopted (ADR-035, ADR-036).
+2. [x] Playwright 1.64.1 only in Automation; Application gained only package-free ports; architecture and source tests green.
+3. [x] Pinned verification image with Chromium 156 (build 1248), run non-root with sandbox seccomp profile; version-lock test.
+4. [x] BrowserHost lifecycle: launch, reuse, recycle, crash replacement, per-session browsers, shutdown without orphans, launch timing.
+5. [x] Fresh context per session; isolation tests (cookies, storage, service workers).
+6. [x] Navigate/click/submit/fill/select/wait/getText/getAttribute with typed selectors, auto-wait and strict mode.
+7. [x] Screenshots (on failure by default, pixel-verified masking) and downloads (generated names, limits, hashes, cleanup).
+8. [x] Timeouts, session deadline and cancellation; classified error codes with IsTransient.
+9. [x] Structured execution events; sensitive values, URL query values and proxy credentials never logged.
+10. [x] Egress proxy: per-session credentials, rules, own DNS, IP policy, pinning, quotas, strict parsing.
+11. [x] Chromium forced through the proxy incl. loopback; cannot resolve names; QUIC/WebRTC/service workers restricted.
+12. [x] SSRF matrix (direct, encodings, IPv6, metadata, redirects, mixed DNS, rebinding, embeds, WebSockets, proxy self-target, WebRTC, non-web schemes) and fail-closed tests.
+13. [x] No script-evaluation APIs (source scan); selectors are data.
+14. [x] Validator enforces hosted rules (browser-per-session, sandbox, https-only, no private exceptions).
+15. [x] DemoCrm end-to-end through real Chromium (separate process).
+16. [x] 0 warnings; all tests green in the container (unit 223, integration 14, DemoCrm 150, browser/proxy 121).
+17. [x] docs/BROWSER_ENGINE.md (incl. hosted container restrictions and image reproduction), ADRs, roadmap.
+18. [x] Secrets audit, separate Phase 3 commit, clean tree.
 
 ## Phase 4 — Workflow engine and action registry
 - Workflow definition model, JSON schema, validator, versioning rules.

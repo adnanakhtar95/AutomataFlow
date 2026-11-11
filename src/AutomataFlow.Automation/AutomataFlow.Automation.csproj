@@ -3,4 +3,15 @@
     <ProjectReference Include="..\AutomataFlow.Domain\AutomataFlow.Domain.csproj" />
     <ProjectReference Include="..\AutomataFlow.Application\AutomataFlow.Application.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Playwright types are used only under AutomataFlow.Automation.Browser (architecture-tested). -->
+    <PackageReference Include="Microsoft.Playwright" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="AutomataFlow.UnitTests" />
+    <InternalsVisibleTo Include="AutomataFlow.AutomationTests" />
+  </ItemGroup>
 </Project>

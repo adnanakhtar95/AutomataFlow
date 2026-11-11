@@ -6,11 +6,17 @@
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Kestrel for the hostile fixture servers; part of the SDK, not a package. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\AutomataFlow.Automation\AutomataFlow.Automation.csproj" />
+    <!-- ADR-027: build-only edge. DemoCrm is launched as a separate process; its assembly is never referenced. -->
+    <ProjectReference Include="..\..\src\DemoCrm\DemoCrm.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>

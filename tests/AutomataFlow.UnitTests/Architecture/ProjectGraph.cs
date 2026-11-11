@@ -14,11 +14,13 @@ internal sealed class ProjectGraph
         _packages = packages;
     }
 
+    public static string RepositoryRoot { get; } = FindRepositoryRoot();
+
     public IEnumerable<string> Projects => _references.Keys;
 
     public static ProjectGraph Load()
     {
-        var root = FindRepositoryRoot();
+        var root = RepositoryRoot;
         var references = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         var packages = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
 
