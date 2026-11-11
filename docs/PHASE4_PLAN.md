@@ -1,6 +1,6 @@
 # Phase 4 — Workflow Engine and Action Registry: Implementation Plan
 
-Status: **Proposed — awaiting approval. No Phase 4 code exists.**
+Status: **Decisions D1–D7 approved 2026-11-12 (see §16 for the binding clarifications); implementation awaits final approval. No Phase 4 code exists.**
 Basis: Phase 3 as committed in `fd942c2`. Real interfaces reused: `IBrowserSessionFactory`, `IBrowserSession`, `ElementSelector`, `InputValue`, `SelectChoice`, `WaitCondition`, `BrowserSessionRequest`, `BrowserOperationException`/`BrowserErrorCode`, `EgressPolicy`/`AllowedHostRule`, `ExecutionScope`, `IExecutionLogSink`, `IArtifactStore`.
 
 **Out of scope (Phase 5/6):** database persistence, job scheduling, CSV upload infrastructure, Worker implementation, retries, frontend.
@@ -619,3 +619,68 @@ The `transientWhen` field is part of decision D3. The `outcome` may carry a cond
 }
 ```
 The full file is produced in implementation step 8. Until then the hand-written validator is authoritative and the schema is for editor assistance.
+
+---
+
+## 16. Approval record (2026-11-12) and decision-driven clarifications
+All seven decisions were approved by the user. Several came with explicit conditions, which this section turns into binding design rules. Status: **plan approved in principle; implementation awaits final approval.**
+
+### D1: pure policy moves, enforcement stays (ADR-037)
+- **What moves:** only the pure definitions and parsers move to `AutomataFlow.Application.Network`: `AllowedHostRule`, `EgressPolicy`, `HostNameNormalizer`, `IpAddressPolicy`, `NormalizedHost`.
+- **What stays in Automation, unchanged:** all **runtime enforcement**: `RequestGuard`, the route/WebSocket guards, redirect inspection, `EgressProxyServer` (DNS, IP checks, pinning, quotas), fail-closed gating, the Chromium flags and the sandbox.
+- **Acceptance gate:** the full Phase 3 suite (508 tests) must pass unchanged, apart from namespaces, before any other Phase 4 work starts.
+
+### D2: a step timeout never terminates the session (ADR-038)
+- **How timeouts are applied:** a step's `timeoutMs` reaches Playwright as **that call's own timeout** via `OperationOptions`. When it expires, Playwright raises a timeout for that call only. The context, page, cookies and login stay intact, so `onError: "continue"` steps can proceed.
+- **What still closes the session:** only the caller's cancellation token, the workflow `timeoutSeconds` and the Phase 3 session deadline, which are deliberately session-terminating.
+- **Error mapping:** a step timeout produces `Timeout` (navigation) or `ElementNotFound` (element wait), transient, **with the session still usable**.
+- **Tests:** a `timeoutMs` failure followed by further successful steps in the same session (real Chromium), and a workflow-timeout test proving that one does terminate.
+- **Uploads:** content only, from `IExecutionFileProvider` as an in-memory `FilePayload`. A filesystem path can never reach Playwright.
+- **Safe page checks:** `CountAsync` and `IsVisibleAsync` are immediate (no auto-wait) and never throw for missing elements. `CurrentUrl` is read raw for conditions but always logged redacted.
+
+### D3: terminal outcome semantics (ADR-039)
+A run ends with **exactly one** terminal outcome, which **cannot be changed once set**.
+
+| Rule | Definition |
+|---|---|
+| Sources of a terminal outcome | (a) a step error under `onError: "fail"`; (b) `captureResult` with an `outcome`; (c) normal completion of `steps` (implicit `Succeeded`); (d) reconcile completion (§10); (e) cancellation / workflow timeout |
+| Terminal `captureResult` | Stops execution immediately; no later step runs. Must be the **last** step of its sequence (validator: no unreachable steps after it). |
+| Outcomes allowed per section | `setup`: `failed` only (a setup cannot "succeed" the run). `reconcile`: `reconciled` / `notFound` / `needsReview` only, and mandatory on every path. `steps`: `succeeded` / `failed`. |
+| Non-terminal `captureResult` (no `outcome`) | Only adds result fields. |
+| Overwrite prevention, static | A result field name may be written **at most once on any execution path**. Two `captureResult` steps that can both run on one path and write the same field is a validation error. |
+| Overwrite prevention, run time | Writing an existing field, or setting a second terminal outcome, throws `ResultOverwrite` (permanent). This backstop should be unreachable after validation, and is tested by bypassing the validator. |
+| Reconcile fields | If reconcile ends `notFound`, its fields are discarded before the main steps run, so results never mix. `reconciled` / `needsReview` keep theirs. |
+| Interaction with side effects | A `failed` outcome whose transience is true (`transient: true` or `transientWhen` evaluating true), declared after a side-effect step started, is reported as `Indeterminate`, preserving the declared code. Permanent failures stay `Failed`. |
+| Late cancellation | Once a terminal outcome is set, cancellation only stops session cleanup waiting; it cannot replace the outcome. |
+| Implementation | The executor holds the outcome in a small state object with a single `TrySetTerminal(...)` transition that refuses a second set; unit-tested exhaustively. |
+
+### D4: sections (ADR-040)
+- **Order:** `setup` → (`reconcile` only when the request's `Intent = Reconcile`) → `steps`.
+- **When reconciliation runs:** the engine never decides this; Phase 5 does.
+- **No side effects in `reconcile`.** `setup` may not contain side-effect steps either; login is not a side effect on the target's business data.
+
+### D5: lifecycle and deterministic hashing (ADR-041)
+- **Lifecycle:** `WorkflowVersion`: `Draft` → `Published` → `Archived`, with no transitions back. In `Published` and `Archived` the definition, schema version and hash are read-only; any mutation throws. Edits create a new version number.
+- **Canonical form** (inspired by RFC 8785, JSON Canonicalization Scheme, implemented by hand with System.Text.Json):
+  - UTF-8 without BOM;
+  - object properties sorted by ordinal UTF-16 code-unit order;
+  - no insignificant whitespace;
+  - strings with minimal escaping (`"`, `\`, control characters as `\u00XX`, and the short escapes `\b \f \n \r \t`);
+  - numbers restricted to integers in the schema (timeouts, indexes, limits) and written in plain decimal form; non-integer numbers are rejected by the parser, so no floating-point formatting ambiguity exists;
+  - `true` / `false` / `null` literal.
+- **Duplicate properties** are rejected *before* canonicalization; a duplicate key never silently wins.
+- **Hash:** SHA-256 over the canonical bytes, lowercase hex, stored on publish. The executor recomputes it and refuses a mismatch (`WorkflowTampered`).
+- **Tests:** the same hash under property reordering, whitespace and escaping variants; a different hash on any semantic change; golden-value tests pinning the exact canonical bytes and hash for the DemoCrm sample, so canonicalization can never drift silently.
+
+### D6: no loops, no regular expressions in schemaVersion 1 (ADR-042)
+The parser rejects any `loop`/`repeat`/`forEach`/`while` keys and any `regex`/`matches` predicate as unknown properties. Introducing either requires a new schemaVersion and an ADR.
+
+### D7: typed parameters that cannot bypass host restrictions (ADR-043)
+| Type | Validation at bind time | Where usable |
+|---|---|---|
+| `url` | parsed with the moved `AllowedHostRule` parser; **origin only** (scheme, host, port: no path, query, fragment or credentials); `https` only outside Development; rejected if the host is an IP literal in a private range and the mode is not Development | only as a whole `{{params.x}}` prefix of `navigate.url` **and only if that same parameter is listed in `allowedHosts`**; never inside another URL's path or authority |
+| `string` | length 1–200, no control characters | template values (`fill`, `select`, conditions, selector values); never in a URL scheme or authority |
+
+- Parameters come from the job configuration (Phase 5), **never from record (CSV) data**. Records cannot set or override parameters.
+- The bound `url` parameters become `EgressPolicy` rules, after which **all Phase 3 runtime enforcement applies unchanged**. Even a parameter pointing at a public name that later resolves to a private IP is stopped by the egress proxy.
+- **Tests:** an origin with a path or credentials is rejected; `http` in hosted mode is rejected; private IP literals are rejected outside Development; a parameter not in `allowedHosts` used in `navigate` is rejected; a parameter whose DNS later resolves privately is blocked by the proxy; a record field named like a parameter cannot influence it.

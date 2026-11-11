@@ -172,6 +172,54 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
 ## ADR-034 — Estimates are indicative; quality first
 **Status:** Accepted (user decision, 2026-11-11). The 16-day target is dropped. Phase estimates are planning aids, not deadlines; quality, reliability and security take priority. ROADMAP shows revised estimates.
 
+## Phase 3 formal approval
+**Status:** Approved by the user on 2026-11-12, on the basis of the reported verification: 508 passing tests across two consecutive complete green runs, commit `fd942c2`.
+
+## ADR-037 — Pure host and IP policy types move to Application; runtime enforcement stays in Automation
+**Status:** Accepted (user decision D1, 2026-11-12; implemented in Phase 4).
+- **What moves** to `AutomataFlow.Application.Network`: `AllowedHostRule`, `EgressPolicy`, `HostNameNormalizer`, `IpAddressPolicy` and `NormalizedHost`. They contain definitions and parsers only, with no I/O and no packages. This lets publish-time validation (Api, via Application) use the exact runtime parser.
+- **What stays in Automation:** the request guard, browser guards, egress proxy, fail-closed gating and Chromium hardening. Phase 3 security is preserved.
+- **Gate:** all Phase 3 tests must pass unchanged, apart from namespaces.
+
+## ADR-038 — Per-step timeouts never terminate the browser session
+**Status:** Accepted (D2). A step's timeout is passed to Playwright as that call's own timeout, so the session survives and `onError: continue` works. Only caller cancellation, the workflow timeout and the session deadline close the session. Also accepted:
+- **Uploads:** content-only (`IExecutionFileProvider`, in-memory payload, never a filesystem path).
+- **Safe page checks:** `CountAsync`, `IsVisibleAsync` and `CurrentUrl`, which are immediate and never throw for missing elements.
+
+## ADR-039 — CaptureResult is the terminal outcome mechanism
+**Status:** Accepted (D3).
+- **Exactly one terminal outcome** per run, set once through a single transition and never overwritten.
+- **Terminal `captureResult`** must be the last step of its sequence.
+- **Outcomes per section:** setup `failed`; reconcile `reconciled` / `notFound` / `needsReview` (mandatory on every path); steps `succeeded` / `failed`.
+- **Result fields** are written at most once per path. This is enforced statically, with a run-time `ResultOverwrite` backstop.
+- **Reconcile fields** are discarded on `notFound`.
+- **Transient failure after a side effect** is reported as `Indeterminate`, with the declared code kept.
+- **Full table:** docs/PHASE4_PLAN.md section 16.
+
+## ADR-040 — Workflow sections: setup, reconcile, steps
+**Status:** Accepted (D4). The order is `setup` → `reconcile` (only when the request asks for it; Phase 5 decides when) → `steps`. Neither `setup` nor `reconcile` may contain side-effect steps.
+
+## ADR-041 — Workflow version lifecycle and deterministic content hashing
+**Status:** Accepted (D5).
+- **Lifecycle:** Draft → Published → Archived, with no way back. Published and Archived definitions are immutable.
+- **Canonical form** (inspired by RFC 8785):
+  - UTF-8;
+  - properties in ordinal order;
+  - no whitespace;
+  - minimal string escaping;
+  - integer-only numbers;
+  - duplicate keys rejected before canonicalization.
+- **Hash:** SHA-256, lowercase hex, recomputed before execution (`WorkflowTampered` on mismatch). Golden-value tests pin it.
+
+## ADR-042 — No loops and no regular expressions in workflow schemaVersion 1
+**Status:** Accepted (D6). Both are rejected as unknown constructs. Adding either requires a new schemaVersion and an ADR.
+
+## ADR-043 — Typed workflow parameters cannot bypass host restrictions
+**Status:** Accepted (D7).
+- **Types:** `url` parameters are origin-only, https-only outside Development and never private IP literals outside Development. They are usable only as the whole prefix of a navigate URL, and only when the same parameter is listed in `allowedHosts`. `string` parameters can never appear in a URL scheme or authority.
+- **Source:** values come from job configuration, never from records.
+- **Enforcement:** bound URL parameters become `EgressPolicy` rules, and all Phase 3 runtime enforcement then applies unchanged.
+
 ---
 
 ## Resolved from the approval round (2026-11-11)

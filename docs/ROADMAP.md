@@ -6,8 +6,8 @@ Status: Draft v0.2. Estimates are indicative planning aids, not deadlines; quali
 |---|---|---|---|
 | 1 | Solution foundation and environment setup | 1.5 | done |
 | 2 | Demo CRM | 2 | done |
-| 3 | Playwright browser engine (incl. egress proxy, SSRF test matrix) | 6.5 | in progress |
-| 4 | Workflow engine and action registry | 3.5 | |
+| 3 | Playwright browser engine (incl. egress proxy, SSRF test matrix) | 6.5 | done (approved 2026-11-12) |
+| 4 | Workflow engine and action registry | 5.0 | planned (decisions approved) |
 | 5 | Background workers and job orchestration | 3 | |
 | 6 | React dashboard | 3 | |
 | 7 | Testing, security, Docker, hosted isolation, documentation | 2+ | |
@@ -70,7 +70,7 @@ Checklist (docs/PHASE3_PLAN.md acceptance list):
 18. [x] Secrets audit, separate Phase 3 commit, clean tree.
 
 ## Phase 4 — Workflow engine and action registry
-Detailed plan: `docs/PHASE4_PLAN.md` (proposed, awaiting approval; decisions D1–D7; estimate 5.0 days, range 4.5–6).
+Detailed plan: `docs/PHASE4_PLAN.md`: decisions D1–D7 approved 2026-11-12 (ADR-037..043); implementation awaits final approval. Estimate 5.0 days (range 4.5–6).
 - Workflow definition model, JSON schema, validator, versioning rules.
 - `IActionHandler` contract, registry, the 12 actions, variable substitution, secret masking.
 - Executor with per-step timeouts, error classification (transient/permanent), result capture.
