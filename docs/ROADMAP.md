@@ -70,6 +70,7 @@ Checklist (docs/PHASE3_PLAN.md acceptance list):
 18. [x] Secrets audit, separate Phase 3 commit, clean tree.
 
 ## Phase 4 — Workflow engine and action registry
+Detailed plan: `docs/PHASE4_PLAN.md` (proposed, awaiting approval; decisions D1–D7; estimate 5.0 days, range 4.5–6).
 - Workflow definition model, JSON schema, validator, versioning rules.
 - `IActionHandler` contract, registry, the 12 actions, variable substitution, secret masking.
 - Executor with per-step timeouts, error classification (transient/permanent), result capture.
