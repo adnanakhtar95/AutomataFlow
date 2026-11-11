@@ -1,17 +1,16 @@
 # AutomataFlow — Roadmap
 
-Status: Draft v0.1. Estimate: ~16 working days, subject to actual complexity. No phase starts without explicit approval.
+Status: Draft v0.2. Estimates are indicative planning aids, not deadlines; quality, reliability and security come first (ADR-034). No phase starts without explicit approval.
 
-| Phase | Title | Est. days |
-|---|---|---|
-| 1 | Solution foundation and environment setup | 1.5 |
-| 2 | Demo CRM | 2 |
-| 3 | Playwright browser engine | 2 |
-| 4 | Workflow engine and action registry | 3.5 |
-| 5 | Background workers and job orchestration | 3 |
-| 6 | React dashboard | 3 |
-| 7 | Testing, security, Docker, documentation | 1 |
-| | Total | 16 (realistic range 16–20) |
+| Phase | Title | Est. days | Status |
+|---|---|---|---|
+| 1 | Solution foundation and environment setup | 1.5 | done |
+| 2 | Demo CRM | 2 | done |
+| 3 | Playwright browser engine (incl. egress proxy, SSRF test matrix) | 6.5 | in progress |
+| 4 | Workflow engine and action registry | 3.5 | |
+| 5 | Background workers and job orchestration | 3 | |
+| 6 | React dashboard | 3 | |
+| 7 | Testing, security, Docker, hosted isolation, documentation | 2+ | |
 
 Phase 7 is deliberately small because testing, security checks and docs are done **continuously** in every phase; Phase 7 is hardening and packaging. Risk: Phase 6 breadth; the first cut covers Jobs, Execution details and Workflow JSON editor, then the remaining screens.
 
@@ -49,7 +48,7 @@ Checklist (approved scope):
 **Exit:** Manual walkthrough works; endpoint tests for validation, duplicate detection, error simulation.
 
 ## Phase 3 — Playwright browser engine
-Detailed plan: `docs/PHASE3_PLAN.md` (proposed, awaiting approval; estimate revised to 6.5 days, range 5.5–7.5).
+Detailed plan: `docs/PHASE3_PLAN.md` (**approved**, ADR-029). Additional mandatory requirements: fail-closed egress and bypass prevention (ADR-030), policy vs network isolation (ADR-031), artifact security (ADR-032), reproducible verify image (ADR-033). Process: spike first (results in `docs/PHASE3_SPIKE.md`), stop and report if a security assumption fails, then implement.
 - `BrowserManager`/context factory, isolated contexts, tracing and screenshots, download handling.
 - Full SSRF protection per ARCHITECTURE §9.1: guard on all requests (redirects, subresources, frames, popups, WebSockets), service workers blocked, DNS/IP policy, egress-proxy design with a hostile-fixture test suite.
 - Playwright browser install procedure documented/scripted.
@@ -84,6 +83,7 @@ Detailed plan: `docs/PHASE3_PLAN.md` (proposed, awaiting approval; estimate revi
 - Coverage gaps, security review against ARCHITECTURE §9, dependency vulnerability scan, license audit.
 - Dockerfiles and full Compose stack (postgres, api, worker, demo-crm, web); non-root, resource limits.
 - Operations guide, workflow authoring guide, README, updated ADRs.
+- Hosted isolation (ADR-031): standalone egress-proxy host and container, browser on an `internal: true` Docker network reachable only to the proxy, proxy egress firewall, Chromium sandbox seccomp profile, resource limits; remote-browser (per-tenant browser server) implementation; detailed browser launch-time benchmarking (deferred from Phase 3, ADR-029).
 **Exit:** `docker compose up` yields a working demo from a clean machine; docs verified by following them.
 
 ## After MVP (not scheduled)

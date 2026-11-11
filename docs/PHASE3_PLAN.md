@@ -1,6 +1,6 @@
 # Phase 3 — Playwright Browser Engine: Technical Implementation Plan
 
-Status: **Proposed — awaiting approval. No Phase 3 code exists yet.**
+Status: **Approved 2026-11-11 (ADR-029)**, with additional mandatory requirements A–E (ADR-030 to ADR-032). Spike results: docs/PHASE3_SPIKE.md.
 Scope: a reusable, secure browser execution engine (lifecycle, isolated sessions, low-level page operations, artifacts, logging, SSRF/egress control) plus real-browser tests against DemoCrm. The workflow engine and action registry (Phase 4) and Worker job orchestration (Phase 5) are out of scope; they will consume this engine.
 
 Items marked **[spike]** are behaviours I am confident about but will prove with a test in the first half-day spike before building on them. If a spike disproves an assumption, I stop and report before changing the design.

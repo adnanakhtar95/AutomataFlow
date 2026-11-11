@@ -108,6 +108,70 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
 ## ADR-028 — DemoCrm control token comes only from the environment
 **Status:** Accepted (user decision, 2026-11-11). The reset/state control token is read from the environment variable DemoCrm__ControlApi__Token (standard .NET mapping of double underscore to the colon-separated key DemoCrm:ControlApi:Token). appsettings.Development.json, which held a placeholder token, was removed; every committed appsettings file keeps the token empty and a test fails if one does not. Behaviour: token missing or empty -> control endpoints return 404 (disabled); missing or wrong header -> 401 (constant-time comparison). The admin UI reset is independent of the token and requires a signed-in user plus antiforgery validation (both covered by tests). scripts/run-demo-crm.ps1 uses the variable from the shell or generates a random per-run value. History note: the placeholder value used in commit 6a9a1a1 is a fictional development constant, was never a real secret, and is retired; commit 6a9a1a1 is intentionally left intact (no history rewrite).
 
+## ADR-029 — Phase 3 plan approved (docs/PHASE3_PLAN.md)
+**Status:** Accepted (user decision, 2026-11-11). All seven plan decisions are approved:
+1. A mandatory egress proxy in every execution mode, running in-process (Worker) for now.
+2. Shared browser for Development/SelfHosted; one browser process per session enforced for HostedMultiTenant.
+3. Our own pinned verification image (ADR-033).
+4. DemoCrm launched as a real child process for browser tests.
+5. Logging and artifact-storage ports in Application, implemented by Infrastructure in Phase 5.
+6. Logging defaults: URL query strings redacted, tracing off, screenshots only on failure, credentials and sensitive input values never logged.
+7. The 6.5-day estimate is accepted. The remote-browser implementation and detailed launch-time benchmarking move to Phase 7; basic lifecycle timing measurements stay in Phase 3.
+
+## ADR-030 — Fail-closed egress and proxy-bypass prevention
+**Status:** Accepted (user requirements A and B).
+- **Fail-closed:** browser execution fails when the egress proxy is unavailable. Chromium must never fall back to direct network access.
+  - The browser is launched with a fixed proxy and no DIRECT fallback.
+  - The launch-level proxy is a closed placeholder endpoint, so a context created without its per-session proxy cannot reach anything.
+  - A session is not created unless the proxy is listening.
+  - Loss of the proxy mid-session makes requests fail; they are never retried directly.
+- **Bypass prevention (each case verified by tests):**
+  - Redirects, subresources, frames, WebSockets and IPv4/IPv6 literals all go through the proxy, including loopback (`<-loopback>` bypass rule).
+  - DNS: Chromium cannot resolve names itself (`--host-resolver-rules`); the proxy resolves them.
+  - QUIC disabled; WebRTC restricted to proxied traffic (`disable_non_proxied_udp`); service workers blocked; background networking disabled.
+- **Stop rule:** if any of these cannot be demonstrated, implementation stops and the issue is reported instead of being worked around.
+
+## ADR-031 — Policy enforcement (dev/self-hosted) versus network isolation (hosted)
+**Status:** Accepted (user requirement D).
+- **In-process egress proxy (Development/SelfHosted):** this is *policy enforcement and auditing*. It is **not** a hard network boundary, because a fully compromised browser process sharing the Worker's network namespace could open sockets directly.
+- **Hard boundary (HostedMultiTenant, built in Phase 7):** container-level network isolation:
+  - The browser runs on a Docker network with `internal: true` whose only reachable peer is the egress proxy.
+  - The database and other services are not on that network.
+  - The proxy container has its own egress firewall that drops private, loopback, link-local and metadata destinations.
+  - Chromium sandbox on, non-root user, seccomp profile, resource limits.
+- The exact required restrictions are documented in docs/BROWSER_ENGINE.md.
+
+## ADR-032 — Artifact security
+**Status:** Accepted (user requirement E).
+- **Treat as sensitive:** screenshots, downloads, traces and execution artifacts are customer data. They are stored only through `IArtifactStore` under organization-scoped keys, never served statically, never opened or executed.
+- **Masking:**
+  - Values filled as sensitive are never logged.
+  - Their elements, password fields, card fields and declared selectors are masked in screenshots.
+  - Screenshots are taken on failure only by default; tracing is off by default and, if enabled, its output is classified as sensitive.
+- **Limit:** the platform does **not** assume every secret shown by a website can be detected automatically. Workflows must declare additional mask selectors, and this limitation is documented.
+
+## ADR-033 — Reproducible verification image
+**Status:** Accepted (user decision 3).
+- **Recipe:** `deploy/verify/Dockerfile` builds `automataflow-verify:pw-<version>`:
+  - Base: `mcr.microsoft.com/dotnet/sdk:10.0.404-noble`, pinned by digest `sha256:fe0fd4e93bd2fbb47c883b7a6369e5c8d3db8bf01cdc5981f6ee35fbdf3ff4fb` (Ubuntu 24.04, .NET SDK 10.0.404).
+  - Chromium is installed with the driver bundled in the pinned Microsoft.Playwright package. The Playwright version is read from Directory.Packages.props, the single source of truth, and Chromium's exact build follows from that version.
+  - Tests run as a non-root user.
+- **Version lock:** the image records the Playwright and Chromium versions, and a test fails on mismatch.
+- **Reproduction:** documented in docs/BROWSER_ENGINE.md.
+
+## ADR-035 — Chromium sandbox via a derived seccomp profile, never --no-sandbox
+**Status:** Accepted (spike C1, 2026-11-11). Under Docker's default seccomp profile the Chromium sandbox cannot start, because unprivileged user namespaces are denied. `deploy/verify/chromium-seccomp.json` is Docker's default profile (moby/profiles, Apache-2.0) plus one rule allowing `clone`/`unshare` without `CAP_SYS_ADMIN`. The browser then runs **with** its sandbox as a non-root user, and privileged operations stay denied. The verification container uses it, and hosted deployments must use it (Phase 7). `ChromiumSandbox=false` is accepted only in Development mode, with a warning, and the validator rejects it elsewhere.
+
+## ADR-036 — Network control details proven by the spike
+**Status:** Accepted (spike, 2026-11-11).
+1. **Resolver rule:** Chromium gets `--host-resolver-rules="MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"`. The exclusion is required because the rule also matches IP literals, including the proxy address. Chromium can therefore reach only the local egress proxy.
+2. **Launch-level proxy:** the browser's launch-level proxy is the egress proxy itself, without credentials. A context created without per-session credentials gets 407 for every request, so it fails closed. A dead proxy gives `ERR_PROXY_CONNECTION_FAILED`, never a direct connection. Loopback is proxied (`<-loopback>`).
+3. **Route guard is not authoritative:** route interception does not see redirect hops, so the egress proxy is authoritative. Redirect chains are additionally inspected through `Request.RedirectedFrom`, and a navigation whose chain contains a denied hop fails with `NavigationBlocked`.
+4. **IPv4-mapped IPv6:** the proxy unwraps IPv4-mapped IPv6 hosts (Chromium sends `[::ffff:7f00:1]`).
+
+## ADR-034 — Estimates are indicative; quality first
+**Status:** Accepted (user decision, 2026-11-11). The 16-day target is dropped. Phase estimates are planning aids, not deadlines; quality, reliability and security take priority. ROADMAP shows revised estimates.
+
 ---
 
 ## Resolved from the approval round (2026-11-11)
