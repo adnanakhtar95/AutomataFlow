@@ -1,0 +1,8 @@
+@page
+@model DemoCrm.Pages.ErrorModel
+@{
+    ViewData["Title"] = "Error";
+}
+<h1 data-testid="page-title">@Model.Title</h1>
+<p data-testid="error-message">@Model.Message</p>
+<p><a href="/" data-testid="error-home-link">Back to home</a></p>

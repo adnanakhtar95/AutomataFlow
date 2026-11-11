@@ -13,6 +13,9 @@ public class DependencyGraphTests
         ["AutomataFlow.Automation"] = ["AutomataFlow.Domain", "AutomataFlow.Application"],
         ["AutomataFlow.Api"] = ["AutomataFlow.Application", "AutomataFlow.Infrastructure"],
         ["AutomataFlow.Worker"] = ["AutomataFlow.Application", "AutomataFlow.Infrastructure", "AutomataFlow.Automation"],
+
+        // The fictional target application is fully independent of the platform (ADR-011, ADR-025).
+        ["DemoCrm"] = [],
     };
 
     [Theory]
@@ -22,6 +25,7 @@ public class DependencyGraphTests
     [InlineData("AutomataFlow.Automation")]
     [InlineData("AutomataFlow.Api")]
     [InlineData("AutomataFlow.Worker")]
+    [InlineData("DemoCrm")]
     public void Source_project_references_match_the_approved_graph(string project)
     {
         Assert.Equal(
@@ -71,6 +75,28 @@ public class DependencyGraphTests
     {
         Assert.Empty(Graph.Packages("AutomataFlow.Domain"));
         Assert.Empty(Graph.Packages("AutomataFlow.Application"));
+    }
+
+    [Fact]
+    public void DemoCrm_references_nothing_from_AutomataFlow_neither_projects_nor_packages()
+    {
+        Assert.Empty(Graph.TransitiveReferences("DemoCrm"));
+        Assert.DoesNotContain(Graph.Packages("DemoCrm"), p => p.StartsWith("AutomataFlow", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void No_AutomataFlow_source_project_references_DemoCrm()
+    {
+        foreach (var project in ApprovedSourceReferences.Keys)
+        {
+            Assert.DoesNotContain("DemoCrm", Graph.TransitiveReferences(project));
+        }
+    }
+
+    [Fact]
+    public void DemoCrm_tests_reference_only_DemoCrm()
+    {
+        Assert.Equal(["DemoCrm"], Graph.DirectReferences("DemoCrm.Tests"));
     }
 
     [Fact]

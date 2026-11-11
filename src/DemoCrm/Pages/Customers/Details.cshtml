@@ -1,0 +1,20 @@
+@page "{id:int}"
+@model DemoCrm.Pages.Customers.DetailsModel
+@{
+    ViewData["Title"] = Model.Customer.DisplayId;
+}
+<h1 data-testid="page-title">Customer @Model.Customer.DisplayId</h1>
+<dl data-testid="customer-details" data-customer-id="@Model.Customer.DisplayId">
+    <dt>Customer ID</dt><dd data-testid="detail-id">@Model.Customer.DisplayId</dd>
+    <dt>First name</dt><dd data-testid="detail-first-name">@Model.Customer.FirstName</dd>
+    <dt>Last name</dt><dd data-testid="detail-last-name">@Model.Customer.LastName</dd>
+    <dt>Email</dt><dd data-testid="detail-email">@Model.Customer.Email</dd>
+    <dt>Phone</dt><dd data-testid="detail-phone">@Model.Customer.Phone</dd>
+    <dt>Company</dt><dd data-testid="detail-company">@(Model.Customer.Company ?? "-")</dd>
+    <dt>Country</dt><dd data-testid="detail-country">@Model.Customer.Country</dd>
+    <dt>Type</dt><dd data-testid="detail-type">@Model.Customer.CustomerType</dd>
+    <dt>Created</dt><dd data-testid="detail-created">@Model.Customer.CreatedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm") UTC</dd>
+    <dt>Source</dt><dd data-testid="detail-source">@(Model.Customer.IsSeeded ? "Seed data" : "Registered")</dd>
+    <dt>Operation reference</dt><dd data-testid="detail-operation-id">@(Model.Customer.OperationId ?? "-")</dd>
+</dl>
+<p><a href="/Customers" data-testid="back-to-list">Back to customers</a></p>

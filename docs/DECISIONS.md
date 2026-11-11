@@ -93,6 +93,20 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
 
 ---
 
+## ADR-024 — DemoCrm uses a thread-safe in-memory store
+**Status:** Accepted (2026-11-11, Phase 2). The in-memory store lives behind ICustomerStore and uses one lock so registration (idempotency check, duplicate checks, insert) is atomic. Chosen over SQLite because SQLite ships an unsigned native library that Windows Smart App Control is likely to block, and because a restart or reset gives a byte-identical seed, which makes demos and tests reproducible. Trade-off: data does not survive a DemoCrm restart, which is acceptable for a demo target. Persistence can be added behind the same interface if ever needed.
+
+## ADR-025 — Phase 2 changes to Phase 1 files
+**Status:** Accepted. Two minimal, necessary edits to completed Phase 1 files: (1) tests/AutomataFlow.UnitTests/Architecture/DependencyGraphTests.cs asserted that src/ contains exactly the six AutomataFlow projects; DemoCrm is now an approved seventh project with zero references, and new tests assert that DemoCrm references nothing from AutomataFlow, that no AutomataFlow source project references DemoCrm, and that DemoCrm.Tests references only DemoCrm. (2) .editorconfig also disables CA1873 (logging-argument evaluation), the same family as the already disabled CA1848 (ADR-005): we log with plain structured message templates. The solution file gained DemoCrm and DemoCrm.Tests. No other Phase 1 file changed.
+
+## ADR-026 — DemoCrm failure simulation is keyed on e-mail plus-tags
+**Status:** Accepted. Failures must be predictable for automated tests, so the scenario is selected by the plus-tag of the submitted email (+fail-N, +commit-fail, +slow) and attempts are counted per address. Validation runs first and does not consume attempts. The commit-fail scenario stores the customer and then returns 503, which is the exact lost-response case that ADR-015 reconciliation must handle. Documented in docs/DEMO_CRM.md.
+
+## ADR-027 — Test project layout for DemoCrm
+**Status:** Accepted. DemoCrm gets its own test project tests/DemoCrm.Tests (xUnit v2, WebApplicationFactory) that references only DemoCrm, so the independence rule stays checkable. Phase 3 AutomationTests will additionally reference DemoCrm to host it for browser tests; the architecture test must then allow that single edge.
+
+---
+
 ## Resolved from the approval round (2026-11-11)
 1. SDK: selected from inspection, not blindly pinned (ADR-004). 2. PostgreSQL: Docker `postgres:18`, port 5433, volume (ADR-013). 3. Git initialized; commit after each verified phase; no secrets or generated artifacts. 4. Identity + JWT (ADR-010). 5. Hand-written validators (ADR-016). 6. Razor Pages Demo CRM (ADR-011). 7. Folder layout `src/ tests/ web/ deploy/ docs/`, React in `web/automataflow-web`. 8. 16-day target, 16–20 realistic; quality over deadline. 9. Frontend libraries deferred (ADR-019). 10. Playwright Chromium download approved for Phase 3.
 

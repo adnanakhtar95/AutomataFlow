@@ -1,0 +1,19 @@
+@page
+@model DemoCrm.Pages.LoginModel
+@{
+    ViewData["Title"] = "Sign in";
+}
+<h1 data-testid="page-title">Sign in</h1>
+<p class="hint">Local demonstration credentials: <code data-testid="demo-credentials-hint">agent@democrm.test</code> (password in <code>appsettings.json</code>).</p>
+@if (Model.ErrorMessage is not null)
+{
+    <div class="banner error" role="alert" data-testid="login-error">@Model.ErrorMessage</div>
+}
+<form method="post" novalidate data-testid="login-form">
+    <input type="hidden" name="ReturnUrl" value="@Model.ReturnUrl" />
+    <label for="Email">Email</label>
+    <input id="Email" name="Email" type="text" autocomplete="username" value="@Model.Email" data-testid="login-email" />
+    <label for="Password">Password</label>
+    <input id="Password" name="Password" type="password" autocomplete="current-password" data-testid="login-password" />
+    <button type="submit" data-testid="login-submit">Sign in</button>
+</form>

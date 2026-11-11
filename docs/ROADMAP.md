@@ -34,8 +34,17 @@ Not in Phase 1: auth endpoints/JWT wiring (Phase 5), Playwright (Phase 3), Demo 
 **Exit:** `dotnet build` and `dotnet test` green on SDK 10; Api and Worker start; Postgres reachable on 5433; migration applied; docs updated.
 
 ## Phase 2 — Demo CRM
-- ASP.NET Core demo app: login, registration, search, details, duplicate detection, validation, configurable simulated temporary errors (e.g. `?failRate` / header / config).
-- Stable `data-testid` attributes; fictional seed data; sample CSV (valid, invalid, duplicate rows).
+Checklist (approved scope):
+1. [x] DemoCrm Razor Pages project, fully independent of AutomataFlow projects (architecture-tested).
+2. [x] Login with fictional credentials; customer registration, listing, search, details.
+3. [x] Server-side validation, duplicate detection (email, phone), clear success and error messages.
+4. [x] Predictable simulated failures (+fail-N, +commit-fail, +slow) and the idempotency contract (OperationId, replay, conflict).
+5. [x] Deterministic seed data and safe reset (admin UI, token-protected control API).
+6. [x] Tests: 139 DemoCrm tests plus architecture tests; build and all tests green in the container.
+7. [x] Live demonstration, docs/DEMO_CRM.md, separate commit.
+
+- ASP.NET Core Razor Pages demo app: login, registration, listing, search, details, duplicate detection, validation, predictable simulated temporary errors (email plus-tags).
+- Stable `data-testid` attributes; fictional seed data; `samples/demo-customers.csv` (valid, invalid, duplicate and failure-scenario rows with expected outcomes, verified by a test).
 - Idempotency contract (ARCHITECTURE §5.6): `operationId` accepted on registration with a unique index; replay returns the original customer/confirmation; lookup by operation id and by email for reconciliation; error simulation includes "commit then fail the response" and "slow response after commit".
 **Exit:** Manual walkthrough works; endpoint tests for validation, duplicate detection, error simulation.
 

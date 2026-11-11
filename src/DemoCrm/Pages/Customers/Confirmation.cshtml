@@ -1,0 +1,13 @@
+@page "{id:int}"
+@model DemoCrm.Pages.Customers.ConfirmationModel
+@{
+    ViewData["Title"] = "Registration confirmed";
+}
+<h1 data-testid="page-title">Registration confirmation</h1>
+<div class="banner success" role="status" data-testid="confirmation-message" data-result="@Model.Result">
+    @Model.Message
+</div>
+<p>Customer ID: <strong data-testid="confirmation-customer-id">@Model.Customer.DisplayId</strong></p>
+<p>Email: <span data-testid="confirmation-email">@Model.Customer.Email</span></p>
+<p><a href="/Customers/Details/@Model.Customer.Id" data-testid="view-customer">View customer</a>
+   <a href="/Customers/Register" data-testid="register-another">Register another customer</a></p>

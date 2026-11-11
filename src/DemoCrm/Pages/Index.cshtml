@@ -1,0 +1,14 @@
+@page
+@model DemoCrm.Pages.IndexModel
+@{
+    ViewData["Title"] = "Home";
+}
+<h1 data-testid="page-title">Welcome, @User.Identity?.Name</h1>
+<div class="cards">
+    <div class="card"><span class="big" data-testid="customer-count">@Model.CustomerCount</span><span>customers</span></div>
+</div>
+<ul class="links">
+    <li><a href="/Customers/Register" data-testid="home-register">Register a new customer</a></li>
+    <li><a href="/Customers" data-testid="home-customers">Browse customers</a></li>
+    <li><a href="/Customers/Search" data-testid="home-search">Search customers</a></li>
+</ul>

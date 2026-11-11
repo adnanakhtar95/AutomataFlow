@@ -21,7 +21,7 @@ Frontend library choices (TanStack Query, Monaco, openapi-typescript) are deferr
 src/   AutomataFlow.Domain | .Application | .Infrastructure | .Automation | .Api | .Worker
        DemoCrm/                 (fictional Razor Pages portal automated by the platform)
 web/   automataflow-web/        (React dashboard)
-tests/ AutomataFlow.UnitTests | .IntegrationTests | .AutomationTests
+tests/ AutomataFlow.UnitTests | .IntegrationTests | .AutomationTests | DemoCrm.Tests
 deploy/ (docker compose, Dockerfiles, .env.example)      docs/
 ```
 Dependency rule: Domain <- Application <- (Infrastructure, Automation) <- (Api, Worker). Domain references nothing. Application never references Infrastructure, Automation, Api or Worker. **Api must never reference Automation (directly or transitively); Infrastructure and Automation never reference each other.** An architecture test enforces this. See ARCHITECTURE.md for the full reference table.

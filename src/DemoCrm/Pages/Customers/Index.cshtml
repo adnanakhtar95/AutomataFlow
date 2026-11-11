@@ -1,0 +1,46 @@
+@page
+@model DemoCrm.Pages.Customers.IndexModel
+@{
+    ViewData["Title"] = "Customers";
+}
+<h1 data-testid="page-title">Customers</h1>
+<form method="get" class="inline" data-testid="filter-form">
+    <label for="Q">Filter</label>
+    <input id="Q" name="Q" type="text" value="@Model.Q" data-testid="filter-input" />
+    <button type="submit" data-testid="filter-submit">Filter</button>
+</form>
+<p data-testid="result-summary">Showing @Model.Result.Items.Count of @Model.Result.TotalCount customers (page @Model.Result.Page of @Model.Result.TotalPages)</p>
+@if (Model.Result.Items.Count == 0)
+{
+    <p class="empty" data-testid="no-customers">No customers match your filter.</p>
+}
+else
+{
+    <table data-testid="customer-table">
+        <thead><tr><th>ID</th><th>Name</th><th>Email</th><th>Phone</th><th>Company</th><th>Country</th><th>Type</th></tr></thead>
+        <tbody>
+        @foreach (var c in Model.Result.Items)
+        {
+            <tr data-testid="customer-row" data-customer-id="@c.DisplayId">
+                <td><a href="/Customers/Details/@c.Id" data-testid="customer-link">@c.DisplayId</a></td>
+                <td>@c.FullName</td>
+                <td data-testid="customer-email">@c.Email</td>
+                <td>@c.Phone</td>
+                <td>@c.Company</td>
+                <td>@c.Country</td>
+                <td>@c.CustomerType</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+    <nav class="pager" data-testid="pager">
+        @if (Model.Result.Page > 1)
+        {
+            <a href="/Customers?Q=@Uri.EscapeDataString(Model.Q ?? "")&P=@(Model.Result.Page - 1)" data-testid="pager-prev">Previous</a>
+        }
+        @if (Model.Result.Page < Model.Result.TotalPages)
+        {
+            <a href="/Customers?Q=@Uri.EscapeDataString(Model.Q ?? "")&P=@(Model.Result.Page + 1)" data-testid="pager-next">Next</a>
+        }
+    </nav>
+}

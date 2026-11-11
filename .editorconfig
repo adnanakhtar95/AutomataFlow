@@ -22,8 +22,9 @@ csharp_style_var_when_type_is_apparent = true:suggestion
 csharp_new_line_before_open_brace = all
 dotnet_style_qualification_for_field = false:suggestion
 dotnet_diagnostic.CA1707.severity = none
-# CA1848 (LoggerMessage delegates) disabled on purpose: we use plain structured message templates (see ADR-005).
+# CA1848/CA1873 (logging performance rules) disabled on purpose: we use plain structured message templates (see ADR-005, ADR-025).
 dotnet_diagnostic.CA1848.severity = none
+dotnet_diagnostic.CA1873.severity = none
 
 # EF Core generated migrations: not hand-edited, exempt from style rules
 [**/Persistence/Migrations/*.cs]

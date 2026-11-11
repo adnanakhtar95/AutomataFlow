@@ -1,0 +1,43 @@
+@page
+@model DemoCrm.Pages.Customers.SearchModel
+@{
+    ViewData["Title"] = "Search customers";
+}
+<h1 data-testid="page-title">Search customers</h1>
+<form method="get" data-testid="search-form">
+    <label for="Field">Search by</label>
+    <select id="Field" name="Field" data-testid="search-field">
+        @foreach (var f in Enum.GetValues<CustomerSearchField>())
+        {
+            <option value="@f" selected="@(f == Model.Field)">@f</option>
+        }
+    </select>
+    <label for="Term">Term</label>
+    <input id="Term" name="Term" type="text" value="@Model.Term" data-testid="search-term" />
+    <button type="submit" data-testid="search-submit">Search</button>
+</form>
+@if (Model.Searched)
+{
+    <p data-testid="search-summary">@Model.Results.Count customer(s) found.</p>
+    @if (Model.Results.Count == 0)
+    {
+        <p class="empty" data-testid="search-no-results">No customers found.</p>
+    }
+    else
+    {
+        <table data-testid="search-results">
+            <thead><tr><th>ID</th><th>Name</th><th>Email</th><th>Phone</th></tr></thead>
+            <tbody>
+            @foreach (var c in Model.Results)
+            {
+                <tr data-testid="search-result-row" data-customer-id="@c.DisplayId">
+                    <td><a href="/Customers/Details/@c.Id" data-testid="customer-link">@c.DisplayId</a></td>
+                    <td>@c.FullName</td>
+                    <td data-testid="customer-email">@c.Email</td>
+                    <td>@c.Phone</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    }
+}

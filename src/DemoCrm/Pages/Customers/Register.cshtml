@@ -1,0 +1,62 @@
+@page
+@model DemoCrm.Pages.Customers.RegisterModel
+@{
+    ViewData["Title"] = "Register customer";
+    string? Err(string field) => ViewData.ModelState["Input." + field]?.Errors.FirstOrDefault()?.ErrorMessage;
+    string Cls(string field) => Err(field) is null ? "" : "invalid";
+}
+<h1 data-testid="page-title">Register customer</h1>
+@if (Model.BannerMessage is not null)
+{
+    <div class="banner error" role="alert" data-testid="form-error" data-error-kind="@Model.BannerKind" data-existing-customer-id="@Model.ExistingCustomerId">@Model.BannerMessage</div>
+}
+<form method="post" novalidate data-testid="register-form">
+    <label for="Input_FirstName">First name</label>
+    <input id="Input_FirstName" name="Input.FirstName" type="text" value="@Model.Input.FirstName" class="@Cls("FirstName")" data-testid="input-first-name" />
+    <span class="field-error" data-testid="error-first-name">@Err("FirstName")</span>
+
+    <label for="Input_LastName">Last name</label>
+    <input id="Input_LastName" name="Input.LastName" type="text" value="@Model.Input.LastName" class="@Cls("LastName")" data-testid="input-last-name" />
+    <span class="field-error" data-testid="error-last-name">@Err("LastName")</span>
+
+    <label for="Input_Email">Email</label>
+    <input id="Input_Email" name="Input.Email" type="text" value="@Model.Input.Email" class="@Cls("Email")" data-testid="input-email" />
+    <span class="field-error" data-testid="error-email">@Err("Email")</span>
+
+    <label for="Input_Phone">Phone</label>
+    <input id="Input_Phone" name="Input.Phone" type="text" value="@Model.Input.Phone" class="@Cls("Phone")" data-testid="input-phone" />
+    <span class="field-error" data-testid="error-phone">@Err("Phone")</span>
+
+    <label for="Input_Company">Company (optional)</label>
+    <input id="Input_Company" name="Input.Company" type="text" value="@Model.Input.Company" class="@Cls("Company")" data-testid="input-company" />
+    <span class="field-error" data-testid="error-company">@Err("Company")</span>
+
+    <label for="Input_Country">Country</label>
+    <select id="Input_Country" name="Input.Country" class="@Cls("Country")" data-testid="input-country">
+        <option value="">Select a country</option>
+        @foreach (var country in CustomerInputValidator.Countries)
+        {
+            <option value="@country" selected="@(country == Model.Input.Country)">@country</option>
+        }
+    </select>
+    <span class="field-error" data-testid="error-country">@Err("Country")</span>
+
+    <label for="Input_CustomerType">Customer type</label>
+    <select id="Input_CustomerType" name="Input.CustomerType" class="@Cls("CustomerType")" data-testid="input-customer-type">
+        <option value="">Select a type</option>
+        @foreach (var type in CustomerInputValidator.CustomerTypes)
+        {
+            <option value="@type" selected="@(type == Model.Input.CustomerType)">@type</option>
+        }
+    </select>
+    <span class="field-error" data-testid="error-customer-type">@Err("CustomerType")</span>
+
+    <label for="Input_OperationId">Operation reference (GUID, makes the submission idempotent)</label>
+    <input id="Input_OperationId" name="Input.OperationId" type="text" value="@Model.Input.OperationId" class="@Cls("OperationId")" data-testid="input-operation-id" />
+    <span class="field-error" data-testid="error-operation-id">@Err("OperationId")</span>
+
+    <label class="checkbox"><input id="Input_AcceptTerms" name="Input.AcceptTerms" type="checkbox" value="true" checked="@Model.Input.AcceptTerms" data-testid="input-accept-terms" /> I confirm that the data is accurate</label>
+    <span class="field-error" data-testid="error-accept-terms">@Err("AcceptTerms")</span>
+
+    <button type="submit" data-testid="register-submit">Register customer</button>
+</form>

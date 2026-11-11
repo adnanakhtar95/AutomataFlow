@@ -41,6 +41,7 @@ dotnet build AutomataFlow.slnx
 dotnet test AutomataFlow.slnx --no-build
 '@ -replace "`r", ''
 
+$ErrorActionPreference = 'Continue'   # native stderr (e.g. test failures) must not abort before the exit code is read
 docker run --rm `
     -v "${root}:/src:ro" `
     -e DOTNET_CLI_TELEMETRY_OPTOUT=1 -e DOTNET_NOLOGO=1 `

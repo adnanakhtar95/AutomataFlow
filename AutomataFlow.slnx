@@ -6,10 +6,12 @@
     <Project Path="src/AutomataFlow.Domain/AutomataFlow.Domain.csproj" />
     <Project Path="src/AutomataFlow.Infrastructure/AutomataFlow.Infrastructure.csproj" />
     <Project Path="src/AutomataFlow.Worker/AutomataFlow.Worker.csproj" />
+    <Project Path="src/DemoCrm/DemoCrm.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/AutomataFlow.AutomationTests/AutomataFlow.AutomationTests.csproj" />
     <Project Path="tests/AutomataFlow.IntegrationTests/AutomataFlow.IntegrationTests.csproj" />
     <Project Path="tests/AutomataFlow.UnitTests/AutomataFlow.UnitTests.csproj" />
+    <Project Path="tests/DemoCrm.Tests/DemoCrm.Tests.csproj" />
   </Folder>
 </Solution>

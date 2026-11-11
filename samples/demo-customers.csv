@@ -1,0 +1,15 @@
+firstName,lastName,email,phone,company,country,customerType,expected
+Priya,Raman,priya.raman@example.test,+1 555 4001,Lotus Analytics,India,Premium,created
+Marcus,Webb,marcus.webb@example.test,+1 555 4002,,United States,Standard,created
+Helena,Voss,helena.voss@example.test,+49 555 4003,Voss Optik,Germany,Standard,created
+Tom,Ellis,tom.ellis@example.test,+44 555 4004,Ellis Freight,United Kingdom,Standard,created
+Alice,Morgan,alice.morgan@example.test,+1 555 4005,Brightwater Supplies,Canada,Standard,duplicate-email
+Dana,Quill,dana.quill@example.test,+1 555 0103,Quill Press,Canada,Standard,duplicate-phone
+Ravi,Shah,not-an-email,+1 555 4007,,India,Standard,invalid
+Lena,Park,lena.park@example.test,12,,Australia,Premium,invalid
+Omar,Reyes,omar.reyes@example.test,+1 555 4009,Reyes Cafe,Atlantis,Standard,invalid
+Ivy,Chen,ivy.chen@example.test,+1 555 4010,,Canada,Platinum,invalid
+Nora,Finch,nora.finch+fail-2@example.test,+1 555 4011,Finch Books,Canada,Standard,created
+Paul,Lamb,paul.lamb+commit-fail@example.test,+1 555 4012,Lamb Tools,Australia,Premium,created
+Sara,Idle,sara.idle+slow@example.test,+1 555 4013,,United States,Standard,created
+Priya,Raman,priya.raman@example.test,+1 555 4014,Lotus Analytics,India,Premium,duplicate-email

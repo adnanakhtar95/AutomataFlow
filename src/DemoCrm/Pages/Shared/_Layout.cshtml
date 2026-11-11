@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@(ViewData["Title"] ?? "DemoCrm") - DemoCrm</title>
+    <link rel="stylesheet" href="~/css/site.css" />
+</head>
+<body>
+<header class="topbar">
+    <a class="brand" href="/" data-testid="brand">DemoCrm</a>
+    <span class="tagline">Fictional demo portal - fictional data only</span>
+    @if (User.Identity?.IsAuthenticated == true)
+    {
+        <nav data-testid="main-nav">
+            <a href="/" data-testid="nav-home">Home</a>
+            <a href="/Customers" data-testid="nav-customers">Customers</a>
+            <a href="/Customers/Search" data-testid="nav-search">Search</a>
+            <a href="/Customers/Register" data-testid="nav-register">Register customer</a>
+            <a href="/Admin" data-testid="nav-admin">Admin</a>
+        </nav>
+        <form method="post" asp-page="/Logout" class="logout">
+            <span data-testid="current-user">@User.Identity.Name</span>
+            <button type="submit" data-testid="logout-button">Sign out</button>
+        </form>
+    }
+</header>
+<main>
+    @RenderBody()
+</main>
+<footer>DemoCrm is a fictional target application for AutomataFlow demonstrations. Never expose it publicly.</footer>
+</body>
+</html>

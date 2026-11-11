@@ -1,0 +1,32 @@
+@page
+@model DemoCrm.Pages.Admin.IndexModel
+@{
+    ViewData["Title"] = "Admin";
+}
+<h1 data-testid="page-title">Demo administration</h1>
+@if (Model.ResetMessage is not null)
+{
+    <div class="banner success" role="status" data-testid="reset-message">@Model.ResetMessage</div>
+}
+<dl>
+    <dt>Customers</dt><dd data-testid="admin-customer-count">@Model.CustomerCount</dd>
+    <dt>Seeded customers</dt><dd data-testid="admin-seeded-count">@Model.SeededCount</dd>
+    <dt>Failure simulation</dt><dd data-testid="admin-simulation-state">@(Model.SimulationEnabled ? "Enabled" : "Disabled")</dd>
+</dl>
+
+<h2>Reset demo data</h2>
+<p>Discards every registered customer and restores the original seed data. Fictional data only.</p>
+<form method="post" asp-page-handler="Reset" data-testid="reset-form">
+    <button type="submit" data-testid="reset-button">Reset demo data</button>
+</form>
+
+<h2>Predictable failure scenarios</h2>
+<p>Add a plus-tag to the email local part when registering a customer:</p>
+<table data-testid="scenario-table">
+    <thead><tr><th>Email example</th><th>Behaviour</th></tr></thead>
+    <tbody>
+        <tr><td><code>name+fail-1@example.test</code></td><td>First submission returns 503 before anything is stored; the second succeeds. <code>fail-2</code> ... <code>fail-5</code> fail that many times.</td></tr>
+        <tr><td><code>name+commit-fail@example.test</code></td><td>First submission is stored, then 503 is returned (lost response). Retrying with the same operation reference reports "already processed"; without it a duplicate error is shown.</td></tr>
+        <tr><td><code>name+slow@example.test</code></td><td>The submission succeeds after a delay (default 3 seconds).</td></tr>
+    </tbody>
+</table>
