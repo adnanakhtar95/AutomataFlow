@@ -22,7 +22,7 @@ public sealed class CheckpointAckLostJournal(TimeProvider clock, TimeSpan? lease
 /// <summary>J5: completion fails (diagnostic only for the executor; the entry later becomes Abandoned).</summary>
 public sealed class CompleteThrowsJournal(TimeProvider clock, TimeSpan? lease = null) : InMemoryAttemptJournal(clock, lease)
 {
-    public override Task CompleteAsync(AttemptReservation reservation, AttemptCompletion completion, CancellationToken cancellationToken) =>
+    public override Task<DateTimeOffset> CompleteAsync(AttemptReservation reservation, AttemptCompletion completion, CancellationToken cancellationToken) =>
         throw new AttemptJournalException("Simulated completion failure.");
 }
 

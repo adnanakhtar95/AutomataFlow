@@ -112,8 +112,8 @@ public interface IAttemptJournal
     /// </summary>
     Task<AttemptReservationResult> ReserveAsync(Guid organizationId, Guid operationId, ExecutionIntent intent, WorkerIncarnationId incarnation, CancellationToken cancellationToken);
 
-    /// <summary>Reserved → Started with the definition snapshot and <c>StartedAt</c>. Fenced.</summary>
-    Task StartAsync(AttemptReservation reservation, AttemptSnapshot snapshot, CancellationToken cancellationToken);
+    /// <summary>Reserved → Started with the definition snapshot; returns <c>StartedAt</c> (journal clock). Fenced.</summary>
+    Task<DateTimeOffset> StartAsync(AttemptReservation reservation, AttemptSnapshot snapshot, CancellationToken cancellationToken);
 
     /// <summary>
     /// Durably records "side effect starting at <paramref name="stepId"/>" (<c>SideEffectCheckpointAt</c>). Accepted only if
@@ -127,9 +127,9 @@ public interface IAttemptJournal
 
     /// <summary>
     /// Started → Completed. Also accepted after lease loss as a LATE completion of an Abandoned entry, which only adds
-    /// information (outcome, fence); it never admits anything.
+    /// information (outcome, fence); it never admits anything. Returns <c>FinishedAt</c> (journal clock).
     /// </summary>
-    Task CompleteAsync(AttemptReservation reservation, AttemptCompletion completion, CancellationToken cancellationToken);
+    Task<DateTimeOffset> CompleteAsync(AttemptReservation reservation, AttemptCompletion completion, CancellationToken cancellationToken);
 
     /// <summary>Reserved → removed (refusals before <c>StartAsync</c>); a released reservation never becomes an attempt.</summary>
     Task ReleaseAsync(AttemptReservation reservation, CancellationToken cancellationToken);

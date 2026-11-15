@@ -39,7 +39,7 @@ public readonly record struct ConditionResult(bool Value, string? ErrorCode)
 /// </summary>
 public static class ConditionEvaluator
 {
-    public static async Task<ConditionResult> EvaluateAsync(
+    public static async Task<ConditionResult> CheckAsync(
         ConditionExpr expression,
         IPageProbe probe,
         ITemplateValues values,

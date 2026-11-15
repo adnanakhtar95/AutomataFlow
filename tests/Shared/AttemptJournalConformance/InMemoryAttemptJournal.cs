@@ -109,7 +109,7 @@ public class InMemoryAttemptJournal(TimeProvider clock, TimeSpan? leaseLength = 
         }
     }
 
-    public virtual Task StartAsync(AttemptReservation reservation, AttemptSnapshot snapshot, CancellationToken cancellationToken)
+    public virtual Task<DateTimeOffset> StartAsync(AttemptReservation reservation, AttemptSnapshot snapshot, CancellationToken cancellationToken)
     {
         lock (_gate)
         {
@@ -117,9 +117,8 @@ public class InMemoryAttemptJournal(TimeProvider clock, TimeSpan? leaseLength = 
             entry.State = AttemptState.Started;
             entry.StartedAt = now;
             entry.Snapshot = snapshot;
+            return Task.FromResult(now);
         }
-
-        return Task.CompletedTask;
     }
 
     public virtual Task SideEffectStartingAsync(AttemptReservation reservation, string stepId, TimeSpan stepTimeout, CancellationToken cancellationToken)
@@ -154,7 +153,7 @@ public class InMemoryAttemptJournal(TimeProvider clock, TimeSpan? leaseLength = 
         }
     }
 
-    public virtual Task CompleteAsync(AttemptReservation reservation, AttemptCompletion completion, CancellationToken cancellationToken)
+    public virtual Task<DateTimeOffset> CompleteAsync(AttemptReservation reservation, AttemptCompletion completion, CancellationToken cancellationToken)
     {
         lock (_gate)
         {
@@ -181,9 +180,8 @@ public class InMemoryAttemptJournal(TimeProvider clock, TimeSpan? leaseLength = 
             entry.ExecutionFenced = completion.ExecutionFenced;
             entry.FinishedAt = now;
             entry.Reconciliation = completion.Reconciliation;
+            return Task.FromResult(now);
         }
-
-        return Task.CompletedTask;
     }
 
     public virtual Task ReleaseAsync(AttemptReservation reservation, CancellationToken cancellationToken)

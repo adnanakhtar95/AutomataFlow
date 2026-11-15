@@ -102,7 +102,7 @@ public class ConditionEvaluatorTests
     }
 
     private static async Task<ConditionResult> Evaluate(string expression, FakeProbe probe) =>
-        await ConditionEvaluator.EvaluateAsync(Expr(expression), probe, new Values(), TemplateResolver.InputLookup(Definition), CancellationToken.None);
+        await ConditionEvaluator.CheckAsync(Expr(expression), probe, new Values(), TemplateResolver.InputLookup(Definition), CancellationToken.None);
 
     [Theory]
     [InlineData("{\"elementExists\":{\"testId\":\"row\"}}", true)]

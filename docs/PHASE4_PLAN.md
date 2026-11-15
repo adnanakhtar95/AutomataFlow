@@ -1801,11 +1801,11 @@ It runs against `InMemoryAttemptJournal` in Phase 4, and unchanged against Postg
    - explicit `sideEffect` declarations, side-effect placement and timeouts;
    - idempotency attestation and reconciliation structure and keys;
    - explicit finalization and terminal-outcome rules.
-6. [ ] `ActionCatalog` (Application) ↔ handlers (Automation) 1:1, verified at startup and by tests; the Api uses only Application. (Step 5: catalog with exactly one descriptor per action type; the handler side and registry check are step 7.)
+6. [x] `ActionCatalog` (Application) ↔ handlers (Automation) 1:1, verified at startup and by tests; the Api uses only Application. (Step 5 catalog; step 7 handlers and `ActionRegistry` startup check, ADR-065.)
 7. [ ] (Step 4: template compiler, reference/sink checker, run-time resolver, URL grammar/encoder/final validation, canonical origins, parameter binding and `RecordValidator` implemented and tested, ADR-062; applied to every action config in step 5.) Variables for `record` / `steps` / `operation` / `params` / `secret` with static checking; URL values encoded by context; dot segments, empty path values and unsafe values rejected; url parameters canonicalized; final URL validated on `AbsoluteUri`; the record can never control scheme, host or port.
 8. [ ] Sink rules enforced at validation and run time; sensitive extracts redacted and masked; results bounded and never sensitive; sensitive values never in logs, results, step records, journal entries or errors. Universal secret detection is **not** claimed.
 9. [x] `urlMatches` / `wait.url` glob implemented without regex, with the documented semantics and rejected characters. (Step 4; Playwright-identical `**` semantics per ADR-062. The real-browser corpus comparison with `wait.url` runs in step 9.)
-10. [ ] (Step 5: explicit finalization on every path is enforced by the validator; the run-time outcome rules are step 7.) Exactly one terminal outcome per attempt; explicit finalization on every path; refusals are not attempts; reconciliation findings distinct from attempt outcomes and record resolution.
+10. [x] (Step 5 validator; step 7 run-time rules, ADR-065.) Exactly one terminal outcome per attempt; explicit finalization on every path; refusals are not attempts; reconciliation findings distinct from attempt outcomes and record resolution.
 11. [ ] (Step 6: `RepeatSafetyEvaluator` S0–N4 with E1–E42 and the E33 property test, and the guard `Admits`; reconcileMatch evaluation and the executor guard wiring are step 7.) Repeat safety:
     - reconcile attempts never run main steps;
     - `reconcileMatch` matches exactly and turns ambiguity into NeedsReview;
@@ -1823,8 +1823,8 @@ It runs against `InMemoryAttemptJournal` in Phase 4, and unchanged against Postg
     - the shared conformance suite green against the in-memory journal;
     - no production `IAttemptJournal` implementation in Phase 4.
 12a. [x] (Validator: step 3; latency from the dispatch horizon: step 6, E18–E20, E28, E39, E41, H1–H4.) Authoritative reconciliation requires an `authority` block (target commit-latency contract); latency is measured from the dispatch horizon; validator rejects authoritative without it.
-13. [ ] Errors classified with category and transience; after a side effect only declared permanent business outcomes give `Failed`, everything else gives `Indeterminate`; uploads checked for size, extension, content type and signature before the checkpoint.
-14. [ ] Executor runs one attempt per call with a fresh Phase 3 session that is always disposed; request/result/evidence/journal contracts ready for Phase 5.
+13. [x] (Step 7: §9 classification, R8 outcome rules X1–X10, upload checks before the checkpoint.) Errors classified with category and transience; after a side effect only declared permanent business outcomes give `Failed`, everything else gives `Indeterminate`; uploads checked for size, extension, content type and signature before the checkpoint.
+14. [x] (Step 7, J1–J11.) Executor runs one attempt per call with a fresh Phase 3 session that is always disposed; request/result/evidence/journal contracts ready for Phase 5.
 15. [ ] Immutability: deterministic canonicalization with golden values; hash verified at publish, load and execution; `WorkflowVersion` lifecycle; schemaVersion dispatch.
 16. [ ] DemoCrm fixture extensions implemented and tested; no production project depends on DemoCrm.
 17. [ ] DemoCrm sample and variants pass every §12.2 and §13.4 scenario in real Chromium, with exact customer **and** POST-submission counts, and zero unauthorized resubmissions.

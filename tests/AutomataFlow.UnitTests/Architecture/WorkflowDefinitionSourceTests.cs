@@ -20,6 +20,21 @@ public class WorkflowDefinitionSourceTests
         Assert.Superset(new HashSet<string?>(["Definition", "Templates", "Urls", "Records", "Binding", "Actions", "Execution"], StringComparer.Ordinal), folders);
     }
 
+    /// <summary>§2: handlers and the executor reach the browser only through IBrowserSession, never Playwright; no scripting.</summary>
+    [Theory]
+    [InlineData(@"\bMicrosoft\.Playwright\b")]
+    [InlineData(@"\b(IPage|ILocator|IBrowserContext)\b")]
+    [InlineData(@"\b(EvaluateAsync|EvalOnSelector|AddInitScript|ExposeFunction)\w*")]
+    [InlineData(@"\bRegex\b")]
+    public void Workflow_handlers_use_only_the_browser_session(string forbiddenPattern)
+    {
+        var folder = Path.Combine(ProjectGraph.RepositoryRoot, "src", "AutomataFlow.Automation", "Workflows");
+        var files = Directory.EnumerateFiles(folder, "*.cs").ToList();
+        Assert.NotEmpty(files);
+
+        Assert.Empty(files.Where(f => Regex.IsMatch(File.ReadAllText(f), forbiddenPattern)).Select(Path.GetFileName));
+    }
+
     /// <summary>
     /// ADR-058 fail-closed rule 1: no production assembly contains an attempt journal in Phase 4 (the in-memory journal is
     /// test-only), so no real execution can rely on a non-durable journal.

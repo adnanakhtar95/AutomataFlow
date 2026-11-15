@@ -65,6 +65,12 @@ public sealed class UploadLimits
 
     /// <summary>Largest in-memory upload payload the browser layer accepts (docs/PHASE4_PLAN.md §1.6, default 10 MB).</summary>
     public long MaxBytes { get; set; } = 10L * 1024 * 1024;
+
+    /// <summary>
+    /// Extensions the server permits for uploads (§5.4). Must be a subset of the types the engine can verify by content
+    /// sniffing, which never include executables or scripts. An upload step's list must be a subset of this one.
+    /// </summary>
+    public List<string> AllowedExtensions { get; set; } = [".pdf", ".png", ".jpg", ".jpeg", ".docx", ".xlsx", ".csv", ".txt"];
 }
 
 /// <summary>Browser engine configuration (section <c>Automation:Browser</c>), validated at startup.</summary>
@@ -167,6 +173,13 @@ public sealed class BrowserEngineOptionsValidator : IValidateOptions<BrowserEngi
 
         var u = options.Uploads ?? new UploadLimits();
         Range("Uploads.MaxBytes", u.MaxBytes, 1, UploadLimits.ServerMaximumBytes);
+        foreach (var extension in u.AllowedExtensions ?? [])
+        {
+            if (!Workflows.UploadInspector.SniffableExtensions.Contains(extension))
+            {
+                errors.Add($"Uploads.AllowedExtensions entry '{extension}' is not a type the engine can verify ({string.Join(", ", Workflows.UploadInspector.SniffableExtensions.Order())}).");
+            }
+        }
 
         foreach (var origin in options.DevelopmentPrivateNetworkOrigins ?? [])
         {
