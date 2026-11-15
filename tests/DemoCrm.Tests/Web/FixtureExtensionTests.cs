@@ -1,4 +1,5 @@
 using System.Net;
+using DemoCrm.Demo;
 using DemoCrm.Tests.Support;
 
 namespace DemoCrm.Tests.Web;
@@ -97,27 +98,40 @@ public sealed class FixtureExtensionTests : IDisposable
     [Fact]
     public async Task Late_commit_stores_the_customer_even_after_the_client_gave_up()
     {
-        await _app.LoginSuccessfullyAsync();
-        var before = (await _app.GetStateAsync()).CustomerCount;
-        using var giveUp = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
-        var token = await AntiforgeryTokenAsync();
+        // Own instance with a 5 s late commit, so "the client gives up after the server received the POST but before
+        // it committed" is established by observation, never assumed from a fixed client timeout.
+        using var app = new DemoCrmApp(lateCommitDelayMs: 5_000);
+        await app.LoginSuccessfullyAsync();
+        var before = (await app.GetStateAsync()).CustomerCount;
         var fields = new RegistrationForm { Email = "late.one+late-commit@example.test" }.ToFields();
-        fields["__RequestVerificationToken"] = token;
+        fields["__RequestVerificationToken"] = await AntiforgeryTokenAsync(app);
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => _app.Client.PostAsync("/Customers/Register", new FormUrlEncodedContent(fields), giveUp.Token));
-        // The server-side delay (400 ms in tests) elapses after the client aborted. Poll instead of a fixed sleep so a
-        // loaded machine cannot turn scheduling latency into a false failure; the commit must still happen.
-        var state = await _app.GetStateAsync();
-        for (var waited = 0; state.CustomerCount == before && waited < 15_000; waited += 100)
-        {
-            await Task.Delay(100);
-            state = await _app.GetStateAsync();
-        }
+        using var giveUp = new CancellationTokenSource();
+        var post = app.Client.PostAsync("/Customers/Register", new FormUrlEncodedContent(fields), giveUp.Token);
+        var received = await PollAsync(app, s => s.RegistrationSubmissions == 1, TimeSpan.FromSeconds(15));
+        Assert.Equal(1, received.RegistrationSubmissions);
+        Assert.Equal(before, received.CustomerCount); // received, not yet committed
 
+        giveUp.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => post);
+
+        var state = await PollAsync(app, s => s.CustomerCount != before, TimeSpan.FromSeconds(20));
         Assert.Equal(before + 1, state.CustomerCount);
         Assert.Equal(1, state.RegistrationSubmissions);
     }
 
+    private static async Task<DemoStateDto> PollAsync(DemoCrmApp app, Func<DemoStateDto, bool> until, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        var state = await app.GetStateAsync();
+        while (!until(state) && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(50);
+            state = await app.GetStateAsync();
+        }
+
+        return state;
+    }
     [Fact]
     public async Task Late_commit_never_commits_an_invalid_registration()
     {
@@ -130,9 +144,9 @@ public sealed class FixtureExtensionTests : IDisposable
         Assert.Equal(before, (await _app.GetStateAsync()).CustomerCount);
     }
 
-    private async Task<string> AntiforgeryTokenAsync()
+    private static async Task<string> AntiforgeryTokenAsync(DemoCrmApp app)
     {
-        var html = await _app.GetHtmlAsync("/Customers/Register");
+        var html = await app.GetHtmlAsync("/Customers/Register");
         var match = System.Text.RegularExpressions.Regex.Match(html, "name=\"__RequestVerificationToken\"[^>]*value=\"([^\"]+)\"");
         return WebUtility.HtmlDecode(match.Groups[1].Value);
     }

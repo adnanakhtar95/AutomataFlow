@@ -4,7 +4,11 @@ namespace AutomataFlow.UnitTests.Architecture;
 public class PlatformSourceTests
 {
     /// <summary>The only reviewed places allowed to bypass the query-filter backstop (named cases, §7.1 layer 3).</summary>
-    private static readonly string[] IgnoreQueryFiltersAllowList = [];
+    private static readonly string[] IgnoreQueryFiltersAllowList =
+    [
+        // Sign-in lists the authenticated user's own memberships across organizations (always filtered by user id).
+        "src/AutomataFlow.Infrastructure/Identity/AccountService.cs",
+    ];
 
     private static IEnumerable<string> ProductionSources() =>
         Directory.EnumerateFiles(Path.Combine(ProjectGraph.RepositoryRoot, "src"), "*.cs", SearchOption.AllDirectories)

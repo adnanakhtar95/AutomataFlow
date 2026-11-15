@@ -1,3 +1,4 @@
+using AutomataFlow.Api.Auth;
 using AutomataFlow.Api.Health;
 using AutomataFlow.Infrastructure;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -11,6 +12,7 @@ builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfig
     .Enrich.FromLogContext());
 
 builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddPlatformAuth(builder.Configuration);
 
 builder.Services.AddControllers();
 builder.Services.AddProblemDetails();
@@ -25,6 +27,10 @@ var app = builder.Build();
 app.UseExceptionHandler();
 app.UseStatusCodePages();
 app.UseSerilogRequestLogging();
+app.UseAuthentication();
+app.UseMiddleware<MembershipVerificationMiddleware>();
+app.UseRateLimiter();
+app.UseAuthorization();
 
 if (app.Environment.IsDevelopment())
 {

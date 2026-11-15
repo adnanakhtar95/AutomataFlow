@@ -49,7 +49,7 @@ Steps 1–6 do not depend on it.
 
 ## Acceptance checklist
 1. [x] (Step 1, ADR-067: 22 integration tests incl. 8 new database tenant-isolation tests; reflection, source-scan and domain tests.) Persistence model, migrations, constraints; every customer row `IOrganizationOwned`; write guard; reflection test; cross-tenant database tests also with query filters disabled.
-2. [ ] Auth: Identity, JWT, rotating hashed refresh tokens, role policies, platform-operator role, login rate limiting; membership verified server-side.
+2. [ ] (Step 2, ADR-068: implemented with 11 Api tests; the platform-operator policy is only exercised once the fence-confirmation endpoint exists, so the item stays open until then.) Auth: Identity, JWT, rotating hashed refresh tokens, role policies, platform-operator role, login rate limiting; membership verified server-side.
 3. [ ] Workflows: drafts, publish with stored hash, immutability, hash verified on load and before execution; hosted-mode attestation restriction; encrypted organization secrets.
 4. [ ] CSV/JSON: streaming parser with limits, record-level errors, stable OperationId, batched persistence, idempotent job creation.
 5. [ ] PostgreSQL journal passes the unchanged shared conformance suite plus multi-connection concurrency tests; ambiguous commits never assumed successful.

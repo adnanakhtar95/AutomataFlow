@@ -588,6 +588,24 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
   - a source scan forbids `IgnoreQueryFilters` outside reviewed files (none yet) and any production use of the hook.
 - **Statuses:** records add `Reconciled`, `Invalid` and `AwaitingFence`; attempts add `ReconciledFound`, `ReconciledNotFound`, `NeedsReview` and `Abandoned`. Statuses are stored as strings.
 - **Migrations:** generated inside the pinned Linux container, because Smart App Control blocks loading the freshly built assembly for `dotnet ef` on the Windows host.
+## ADR-068 — Authentication, sessions and per-request membership verification (Phase 5 step 2)
+**Status:** Accepted (2026-11-15; implements docs/ARCHITECTURE.md §7.1 layer 1 and §8).
+- **Identity:** `AddIdentityCore` with the Identity PBKDF2 hasher; passwords of at least 12 characters; lockout after 5 failures for 15 minutes; e-mail addresses unique. There are no cookie or UI endpoints. An unknown e-mail costs the same password-hash verification as a wrong password, and both produce the same 401 response.
+- **Access tokens:**
+  - JWT signed with HMAC-SHA256, valid for 15 minutes (configurable 1–60), with a 30 s clock skew;
+  - claims: `sub`, `org` and `jti` only, so a role is never taken from a token;
+  - the signing key (at least 256 bits) comes only from configuration (`Auth__Jwt__SigningKey`); the Api refuses to start without one (`ValidateOnStart`), and tests generate a random key per host.
+- **Refresh tokens:**
+  - 256 random bits, stored only as a SHA-256 hash, valid for 14 days (configurable);
+  - rotated on every use with a conditional update, so of two concurrent refreshes exactly one wins and the loser counts as reuse;
+  - presenting a rotated or revoked token revokes its whole family;
+  - a refresh re-verifies the membership;
+  - `RefreshTokens` holds user-session records: `ActiveOrganizationId` points to the membership in use, and the table holds no organization-owned data.
+- **Per-request membership:** after JWT validation, middleware reads the caller's membership in the token's organization from the database, sets `ICurrentUser` (with `Role`) and binds the request's `TenantScope`. A removed membership gives 403 immediately, even with a valid access token.
+- **Authorization:** policies require a minimum organization role (Viewer < Operator < Admin < Owner), based on the verified membership. Platform operator is a separate Identity role (`PlatformOperator`) checked in the database per request; it is never an organization role (§7.5.6).
+- **Registration:** self-service registration (a new user plus a new organization with Owner membership) is **off unless `Auth:AllowRegistration` is set**. Auth endpoints are rate-limited per client IP (fixed window, `Auth:PermitsPerMinute`, default 20).
+- **Reviewed `IgnoreQueryFilters` use:** sign-in lists the authenticated user's own memberships across organizations, always filtered by user id. This is the first entry on the source-scan allow-list.
+- **Package:** `Microsoft.AspNetCore.Authentication.JwtBearer` 10.0.15 (MIT).
 ## Resolved from the approval round (2026-11-11)
 1. SDK: selected from inspection, not blindly pinned (ADR-004). 2. PostgreSQL: Docker `postgres:18`, port 5433, volume (ADR-013). 3. Git initialized; commit after each verified phase; no secrets or generated artifacts. 4. Identity + JWT (ADR-010). 5. Hand-written validators (ADR-016). 6. Razor Pages Demo CRM (ADR-011). 7. Folder layout `src/ tests/ web/ deploy/ docs/`, React in `web/automataflow-web`. 8. 16-day target, 16–20 realistic; quality over deadline. 9. Frontend libraries deferred (ADR-019). 10. Playwright Chromium download approved for Phase 3.
 

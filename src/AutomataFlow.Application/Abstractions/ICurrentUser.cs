@@ -1,3 +1,5 @@
+using AutomataFlow.Domain.Organizations;
+
 namespace AutomataFlow.Application.Abstractions;
 
 /// <summary>
@@ -12,4 +14,7 @@ public interface ICurrentUser
     Guid UserId { get; }
 
     Guid OrganizationId { get; }
+
+    /// <summary>The caller's role in <see cref="OrganizationId"/>, read from the membership on every request (never from the token).</summary>
+    OrganizationRole Role { get; }
 }
