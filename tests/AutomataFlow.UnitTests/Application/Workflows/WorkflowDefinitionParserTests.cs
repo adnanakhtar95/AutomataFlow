@@ -406,7 +406,11 @@ public class WorkflowDefinitionParserTests
             JsonNode.Parse("{\"placeholder\":\"Search\"}"),
             JsonNode.Parse("{\"xpath\":\"(//table//tr)[1]\"}"));
 
-        var bound = Valid(With(r => r["maskSelectors"] = selectors)).Definition.MaskSelectors;
+        var bound = Valid(With(r =>
+        {
+            r["inputs"] = new JsonArray(new JsonObject { ["name"] = "id", ["type"] = "string" });
+            r["maskSelectors"] = selectors;
+        })).Definition.MaskSelectors;
 
         Assert.Equal(Enum.GetValues<WorkflowSelectorKind>(), bound.Select(s => s.Kind));
         Assert.All(bound, s => Assert.Null(s.AccessibleName));
@@ -530,7 +534,11 @@ public class WorkflowDefinitionParserTests
         AssertRejected(With(r => r["allowedHosts"] = Hosts(0)), path, WorkflowErrorCodes.TooFewItems);
 
         var prefix = "https://";
-        Valid(With(r => r["allowedHosts"] = new JsonArray(prefix + Repeat('h', WorkflowLimits.MaxAllowedHostChars - prefix.Length))));
+        // At the structural limit the entry passes the length check (a 300-char origin cannot be a canonical host, since
+        // DNS names are at most 253 chars, so the semantic check then rejects it for a different reason).
+        var atLimit = Errors(With(r => r["allowedHosts"] = new JsonArray(prefix + Repeat('h', WorkflowLimits.MaxAllowedHostChars - prefix.Length))));
+        Assert.DoesNotContain(atLimit, e => e.Code == WorkflowErrorCodes.TooLong);
+        Assert.Contains(atLimit, e => e.Path == path + "[0]" && e.Code == "allowed-host-not-canonical");
         AssertRejected(With(r => r["allowedHosts"] = new JsonArray(prefix + Repeat('h', WorkflowLimits.MaxAllowedHostChars - prefix.Length + 1))), path + "[0]", WorkflowErrorCodes.TooLong);
         AssertRejected(With(r => r["allowedHosts"] = new JsonArray("")), path + "[0]", WorkflowErrorCodes.TooShort);
     }

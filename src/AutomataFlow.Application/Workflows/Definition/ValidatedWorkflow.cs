@@ -130,6 +130,13 @@ public sealed class ValidatedWorkflow
             return WorkflowValidationResult.Failure(bound.Errors);
         }
 
+        var semantic = new DiagnosticBag();
+        WorkflowSemanticValidator.Validate(bound.Definition!, semantic);
+        if (!semantic.IsValid)
+        {
+            return WorkflowValidationResult.Failure(semantic.Errors);
+        }
+
         var canonical = Json.CanonicalJson.Serialize(parsed.Root!);
         var hash = Json.CanonicalJson.ComputeHash(canonical);
         if (expectedHash is not null && !string.Equals(hash, expectedHash, StringComparison.Ordinal))
@@ -138,7 +145,7 @@ public sealed class ValidatedWorkflow
                 "The definition does not match its recorded hash."));
         }
 
-        return WorkflowValidationResult.Success(new ValidatedWorkflow(bound.Definition!, ImmutableArray.Create(canonical), hash, bound.Warnings));
+        return WorkflowValidationResult.Success(new ValidatedWorkflow(bound.Definition!, ImmutableArray.Create(canonical), hash, [.. bound.Warnings, .. semantic.Warnings]));
     }
 }
 

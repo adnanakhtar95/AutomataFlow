@@ -988,6 +988,7 @@ A fenced attempt stays ambiguous, and only rules A1–A8 resolve it (§7.5.8).
 - **Why this subset:** it means the same thing to our matcher and to Playwright's glob (used by `wait` with `url`), so conditions and waits cannot disagree.
 - **Case:** comparison is ordinal (case-sensitive) everywhere. Browsers always report scheme and host in lowercase, so the validator **rejects uppercase letters in the scheme and host of an absolute pattern**.
 - **Implementation:** a hand-written iterative glob matcher, bounded by the pattern and URL length limits (§1.6), with no regular expressions.
+- **Clarification (ADR-062):** to be identical to Playwright, `**` must be a whole path element; `**/` matches zero or more whole segments (`/a/**/b` matches `/a/b`) and a final `/**` matches the rest. Other `**`, `***` and default ports in absolute patterns are rejected.
 
 ---
 
@@ -1799,9 +1800,9 @@ It runs against `InMemoryAttemptJournal` in Phase 4, and unchanged against Postg
    - idempotency attestation and reconciliation structure and keys;
    - explicit finalization and terminal-outcome rules.
 6. [ ] `ActionCatalog` (Application) ↔ handlers (Automation) 1:1, verified at startup and by tests; the Api uses only Application.
-7. [ ] Variables for `record` / `steps` / `operation` / `params` / `secret` with static checking; URL values encoded by context; dot segments, empty path values and unsafe values rejected; url parameters canonicalized; final URL validated on `AbsoluteUri`; the record can never control scheme, host or port.
+7. [ ] (Step 4: template compiler, reference/sink checker, run-time resolver, URL grammar/encoder/final validation, canonical origins, parameter binding and `RecordValidator` implemented and tested, ADR-062; applied to every action config in step 5.) Variables for `record` / `steps` / `operation` / `params` / `secret` with static checking; URL values encoded by context; dot segments, empty path values and unsafe values rejected; url parameters canonicalized; final URL validated on `AbsoluteUri`; the record can never control scheme, host or port.
 8. [ ] Sink rules enforced at validation and run time; sensitive extracts redacted and masked; results bounded and never sensitive; sensitive values never in logs, results, step records, journal entries or errors. Universal secret detection is **not** claimed.
-9. [ ] `urlMatches` / `wait.url` glob implemented without regex, with the documented semantics and rejected characters.
+9. [x] `urlMatches` / `wait.url` glob implemented without regex, with the documented semantics and rejected characters. (Step 4; Playwright-identical `**` semantics per ADR-062. The real-browser corpus comparison with `wait.url` runs in step 9.)
 10. [ ] Exactly one terminal outcome per attempt; explicit finalization on every path; refusals are not attempts; reconciliation findings distinct from attempt outcomes and record resolution.
 11. [ ] Repeat safety:
     - reconcile attempts never run main steps;

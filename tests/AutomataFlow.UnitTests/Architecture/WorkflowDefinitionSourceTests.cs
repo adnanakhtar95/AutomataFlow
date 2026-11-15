@@ -8,8 +8,17 @@ namespace AutomataFlow.UnitTests.Architecture;
 /// </summary>
 public class WorkflowDefinitionSourceTests
 {
+    /// <summary>Everything under Application/Workflows: definition, templates, URLs, records, binding (and later steps).</summary>
     private static string DefinitionSource =>
-        Path.Combine(ProjectGraph.RepositoryRoot, "src", "AutomataFlow.Application", "Workflows", "Definition");
+        Path.Combine(ProjectGraph.RepositoryRoot, "src", "AutomataFlow.Application", "Workflows");
+
+    [Fact]
+    public void The_scan_covers_every_workflow_component_folder()
+    {
+        var folders = Directory.EnumerateDirectories(DefinitionSource).Select(Path.GetFileName).ToHashSet(StringComparer.Ordinal);
+
+        Assert.Superset(new HashSet<string?>(["Definition", "Templates", "Urls", "Records", "Binding"], StringComparer.Ordinal), folders);
+    }
 
     [Theory]
     [InlineData(@"\bRegex\b")]
