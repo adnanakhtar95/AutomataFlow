@@ -105,9 +105,15 @@ public sealed class FixtureExtensionTests : IDisposable
         fields["__RequestVerificationToken"] = token;
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => _app.Client.PostAsync("/Customers/Register", new FormUrlEncodedContent(fields), giveUp.Token));
-        await Task.Delay(1_000); // the server-side delay (400 ms in tests) elapses after the client aborted
-
+        // The server-side delay (400 ms in tests) elapses after the client aborted. Poll instead of a fixed sleep so a
+        // loaded machine cannot turn scheduling latency into a false failure; the commit must still happen.
         var state = await _app.GetStateAsync();
+        for (var waited = 0; state.CustomerCount == before && waited < 15_000; waited += 100)
+        {
+            await Task.Delay(100);
+            state = await _app.GetStateAsync();
+        }
+
         Assert.Equal(before + 1, state.CustomerCount);
         Assert.Equal(1, state.RegistrationSubmissions);
     }

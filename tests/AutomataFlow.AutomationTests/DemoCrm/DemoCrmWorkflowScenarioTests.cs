@@ -352,7 +352,13 @@ public sealed class DemoCrmWorkflowScenarioTests(BrowserFixture fixture) : IAsyn
         Assert.Equal(WorkflowOutcome.ReconciledNotFound, (await worker.ExecuteAsync(rig.Request(workflow, operation, record, ExecutionIntent.Reconcile), default)).Outcome);
         Assert.Equal(RepeatDecisionKind.NeedsReview, rig.Decide(workflow, operation).Kind);
 
-        await Task.Delay(TimeSpan.FromSeconds(8)); // the late commit lands
+        // The late commit lands (9 s after the POST); poll with a bound instead of a fixed sleep.
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(20);
+        while (await rig.CustomersAsync() == before && DateTimeOffset.UtcNow < deadline)
+        {
+            await Task.Delay(200);
+        }
+
         Assert.Equal((before + 1, 1), (await rig.CustomersAsync(), await rig.PostsAsync()));
     }
 

@@ -74,7 +74,10 @@ Detailed plan: `docs/PHASE4_PLAN.md`. Status:
 - decisions D1–D7 approved 2026-11-12 (ADR-037..043); sink rules ADR-044;
 - review rounds 2–9 decisions ADR-045..060 binding;
 - DemoCrm fixture scope approved 2026-11-15 (ADR-054);
-- **final approval granted by the user on 2026-11-15; implementation in progress, step by step, with no verification waived.**
+- final approval granted by the user on 2026-11-15;
+- **complete (2026-11-15):** steps 1–10 implemented and verified in the pinned Linux container (ADR-061..066); authoring guide `docs/WORKFLOWS.md`; schema `docs/workflow-schema-v1.json`;
+- **not verified on Windows:** the Windows connection-identity path (Smart App Control blocks local test runs; ADR-021, ADR-066);
+- **carried to Phase 5 as exit criteria:** PostgreSQL journal + conformance suite, process-death supervisor (P1–P13), killed-process K tests, database cross-tenant tests, hosted-mode publication restrictions.
 
 Estimate 11.0 days (range 10.0–13.0).
 
