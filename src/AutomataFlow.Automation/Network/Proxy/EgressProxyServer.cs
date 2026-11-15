@@ -141,7 +141,11 @@ public sealed class EgressProxyServer : IAsyncDisposable
     public IConnectionLedger Ledger => _ledger;
 
     /// <summary>Deterministic interleaving hooks for tests; always null in production.</summary>
-    internal EgressTestHooks? Hooks { get; set; }
+    internal EgressTestHooks? Hooks
+    {
+        get => Sessions.Hooks;
+        set => Sessions.Hooks = value;
+    }
 
     public EgressProxyState State { get; private set; }
 
@@ -477,8 +481,11 @@ public sealed class EgressProxyServer : IAsyncDisposable
         }
         finally
         {
-            // Normal end of the connection. During revocation the barrier has already aborted the socket (B3).
-            channel.Socket.Dispose();
+            // Upstream sockets are ONLY ever closed abortively (ADR-060 B3/E2, audit defect D1). A graceful close here
+            // could run before the barrier's B3 (B1 cancels this connection's reads, so the handler unwinds) and would let
+            // the kernel keep sending and retransmitting queued data after Ta; B3's abort of an already-disposed socket
+            // is a no-op. By the time a handler ends, its exchange is finished, so RST instead of FIN loses nothing.
+            channel.Abort();
         }
     }
 

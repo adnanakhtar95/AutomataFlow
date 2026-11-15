@@ -262,8 +262,22 @@ public sealed record RowValueSpec
         return new RowValueSpec(RowValueKind.Attribute, attribute, null);
     }
 
-    public static RowValueSpec OfChildText(ElementSelector child) =>
-        new(RowValueKind.ChildText, null, child ?? throw new ArgumentNullException(nameof(child)));
+    /// <summary>
+    /// A child selector is evaluated inside its row and must not be able to leave it. XPath is rejected (audit defect
+    /// D3): parenthesised expressions, unions ("|") and the parent/ancestor axes can address nodes outside the row even
+    /// when the expression is made relative. CSS, test id, text, role, label and placeholder selectors only match
+    /// descendants of the row.
+    /// </summary>
+    public static RowValueSpec OfChildText(ElementSelector child)
+    {
+        ArgumentNullException.ThrowIfNull(child);
+        if (child.Kind == SelectorKind.XPath)
+        {
+            throw new ArgumentException("XPath selectors are not allowed for row children: they can escape the row scope.", nameof(child));
+        }
+
+        return new RowValueSpec(RowValueKind.ChildText, null, child);
+    }
 
     public override string ToString() => Kind == RowValueKind.Attribute ? $"@{Attribute}" : $"text({Child})";
 }

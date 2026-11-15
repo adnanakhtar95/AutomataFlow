@@ -195,7 +195,7 @@ public sealed class EgressSession : IDisposable
             _revoked = true;
             drained = Gate.CloseWhileHoldingLock();
             snapshot = [.. _connections.Values];
-            _barrier = CompleteBarrierAsync(timeout, drained, snapshot, started.Task);
+            _barrier = CompleteBarrierAsync(timeout, drained, snapshot, started.Task, _registry.Hooks);
         }
 
         // Rest of B1, synchronously and outside the lock: no new authentication, wake every waiting read/DNS/connect.
@@ -208,7 +208,7 @@ public sealed class EgressSession : IDisposable
     /// <summary>Best-effort revocation without waiting (B1 synchronously). Never used to establish a fence.</summary>
     public void Dispose() => _ = RevokeAsync();
 
-    private static async Task<RevocationResult> CompleteBarrierAsync(TimeSpan timeout, Task drained, List<ConnectionState> snapshot, Task b1Done)
+    private static async Task<RevocationResult> CompleteBarrierAsync(TimeSpan timeout, Task drained, List<ConnectionState> snapshot, Task b1Done, EgressTestHooks? hooks)
     {
         // B2-B5 start only after B1 (including credential removal and cancellation) has fully happened.
         await b1Done.ConfigureAwait(false);
@@ -217,6 +217,12 @@ public sealed class EgressSession : IDisposable
 
         // B2: every write admitted before Lr returns. An admitted send is never cancelled (W3).
         var writesDrained = await WaitAsync(drained, deadline.Token).ConfigureAwait(false);
+
+        if (hooks is not null)
+        {
+            // Test seam only: lets a test force handler cleanup to run before B3 (the D1 race), deterministically.
+            await hooks.AtAsync(EgressHookPoint.BeforeAbort, 0).ConfigureAwait(false);
+        }
 
         // B3 (Ta): abort. Upstream sockets abortively (RST; unsent send-queue data discarded), browser sides closed.
         // Done even when B2 timed out (defence in depth), but then the result is TimedOut and no fence follows.
@@ -394,6 +400,9 @@ public sealed class EgressSessionRegistry
     public int MaxConnectionsPerSession { get; }
 
     public TimeSpan RevocationTimeout { get; }
+
+    /// <summary>Deterministic interleaving hooks for tests; always null in production.</summary>
+    internal EgressTestHooks? Hooks { get; set; }
 
     public EgressSession Register(Guid sessionId, EgressPolicy policy)
     {

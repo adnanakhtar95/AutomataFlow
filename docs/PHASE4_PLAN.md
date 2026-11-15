@@ -805,6 +805,7 @@ internal sealed class UpstreamChannel   // the ONLY type that may touch an upstr
 - `BrowserSession.DisposeAsync` runs the barrier **before** closing the browser context;
 - `Dispose()` (no waiting) remains for non-execution paths and never establishes a fence;
 - the Phase 7 out-of-process proxy runs the same barrier before sending its revocation report.
+- **Upstream sockets are only ever closed abortively,** including at the normal end of a connection (Step 2 follow-up, audit defect D1). A graceful close by a connection handler could run before B3, because B1 cancels the handler's reads so it unwinds. The kernel would then keep sending and retransmitting queued data after Ta, and B3's abort of an already-closed socket does nothing. The proxy-level regression test sends 128 KB queued behind a non-reading peer. It fails on the old code (all bytes delivered, FIN) and passes on the fix (fewer bytes, RST).
 
 #### 7.6.3 The review-round-8 interleaving, resolved
 The handler's "check" is now `TryEnter`, which runs under the same lock as B1. The two operations are totally ordered:
@@ -1767,7 +1768,12 @@ It runs against `InMemoryAttemptJournal` in Phase 4, and unchanged against Postg
    - [x] D1–D7 approved (2026-11-12) and recorded (ADR-037 to ADR-043); sink rules accepted and recorded (ADR-044).
    - [x] Round 2–9 decisions recorded (ADR-045 to ADR-060); final approval granted 2026-11-15.
 2. [x] The five pure policy types moved to Application; runtime enforcement unchanged in Automation; all 508 Phase 3 tests green after the move. (Step 1, 2026-11-15: two consecutive green container runs, 523/523 including 15 new architecture tests.)
-3. [ ] Phase 3 extensions are additive. (Step 2 implemented and verified 2026-11-15: all items below except the horizon races H1–H4, which need the `RepeatSafetyEvaluator` and are delivered with step 6. The Windows identity path is implemented but verified only on Linux in the container; Windows verification is pending.)
+3. [ ] Phase 3 extensions are additive. (Step 2 implemented and verified 2026-11-15: all items below except the horizon races H1–H4, which need the `RepeatSafetyEvaluator` and are delivered with step 6. The Windows identity path is implemented but verified only on Linux in the container; Windows verification is pending. Step 2 follow-up after the read-only audit of `e253a65`:
+   - **D1:** upstream sockets are always closed abortively;
+   - **D2:** with an explicit deadline the failure screenshot is skipped or bounded by the remaining budget;
+   - **D3:** XPath is rejected for row-child selectors because it can escape the row.
+
+   Each fix has a regression test.)
    - a step timeout is one total deadline and never terminates the session;
    - uploads are content-only;
    - probes never throw for missing elements;

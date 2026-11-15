@@ -37,6 +37,44 @@ public sealed class SessionStep2Tests(BrowserFixture fixture)
         Assert.Equal(200, after.Status);
     }
 
+    /// <summary>
+    /// D2: with an explicit deadline the failure screenshot is part of the budget. At expiry no budget is left, so it is
+    /// skipped and the call returns within the deadline plus a scheduling margin (750 ms: Playwright IPC round trip,
+    /// failure-event flush and thread-pool scheduling in the container; the old behaviour could add up to 3 s).
+    /// </summary>
+    [Fact]
+    public async Task D2_an_explicit_deadline_includes_the_failure_screenshot_and_is_not_exceeded()
+    {
+        await using var engine = EngineHarness.Create(fixture.Servers);
+        await using var session = await engine.CreateSessionAsync(BrowserFixture.PublicPolicy);
+        await session.NavigateAsync(Public("/hang-form"), CancellationToken.None);
+        var clock = Stopwatch.StartNew();
+
+        await Assert.ThrowsAsync<BrowserOperationException>(() =>
+            session.SubmitAsync(ElementSelector.TestId("go"), OperationOptions.WithTimeout(TimeSpan.FromSeconds(2)), CancellationToken.None));
+        var elapsed = clock.Elapsed;
+
+        Assert.True(elapsed <= TimeSpan.FromSeconds(2) + TimeSpan.FromMilliseconds(750), $"returned after {elapsed.TotalMilliseconds:F0} ms");
+        Assert.Contains(engine.Sink.Entries, e => e.SessionId == session.Id && e.EventType == "ScreenshotSkipped");
+        Assert.DoesNotContain(engine.Store.Items, i => i.Request.SessionId == session.Id && i.Request.Kind == ArtifactKind.Screenshot);
+    }
+
+    [Fact]
+    public async Task D2_an_early_failure_with_budget_left_still_captures_a_bounded_failure_screenshot()
+    {
+        await using var engine = EngineHarness.Create(fixture.Servers);
+        await using var session = await engine.CreateSessionAsync(BrowserFixture.PublicPolicy);
+        await session.NavigateAsync(Public("/dup"), CancellationToken.None);
+        var clock = Stopwatch.StartNew();
+
+        var error = await Assert.ThrowsAsync<BrowserOperationException>(() =>
+            session.ClickAsync(ElementSelector.TestId("twin"), OperationOptions.WithTimeout(TimeSpan.FromSeconds(8)), CancellationToken.None));
+
+        Assert.Equal(BrowserErrorCode.ElementNotUnique, error.Code);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(8), $"returned after {clock.Elapsed}");
+        Assert.Contains(engine.Store.Items, i => i.Request.SessionId == session.Id && i.Request.Kind == ArtifactKind.Screenshot);
+    }
+
     [Fact]
     public async Task An_explicit_timeout_overrides_the_configured_action_default()
     {
@@ -170,6 +208,25 @@ public sealed class SessionStep2Tests(BrowserFixture fixture)
             session.QueryRowsAsync(ElementSelector.TestId("bad-row"), [RowValueSpec.OfChildText(ElementSelector.TestId("email"))], 5, null, CancellationToken.None));
 
         Assert.Equal(BrowserErrorCode.ElementNotUnique, error.Code);
+    }
+
+    /// <summary>D3: a row child selector only ever reads inside its own row, even when a match exists elsewhere on the page.</summary>
+    [Fact]
+    public async Task D3_a_row_child_selector_cannot_read_a_matching_element_outside_its_row()
+    {
+        await using var session = await Engine.CreateSessionAsync(BrowserFixture.PublicPolicy);
+        await session.NavigateAsync(Public("/rows"), CancellationToken.None);
+        Assert.Equal(1, await session.CountAsync(ElementSelector.Css(".outside-only"), null, CancellationToken.None));
+
+        var snapshot = await session.QueryRowsAsync(
+            ElementSelector.TestId("row"),
+            [RowValueSpec.OfChildText(ElementSelector.Css(".outside-only")), RowValueSpec.OfChildText(ElementSelector.TestId("outside-only"))],
+            maxRows: 5,
+            null,
+            CancellationToken.None);
+
+        Assert.Equal(3, snapshot.Count);
+        Assert.All(snapshot.Values, row => Assert.Equal([null, null], row));
     }
 
     [Theory]

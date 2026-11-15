@@ -131,6 +131,13 @@ internal sealed class OperationBudget
         }
     }
 
+    /// <summary>Non-throwing variant of <see cref="Remaining"/>: false once the total budget is exhausted.</summary>
+    public bool TryGetRemaining(out TimeSpan remaining)
+    {
+        remaining = Total - _clock.Elapsed;
+        return remaining > TimeSpan.Zero;
+    }
+
     /// <summary>Timeout for the next sub-step: the remaining total budget, or <paramref name="legacy"/> without explicit options.</summary>
     public float NextMs(TimeSpan legacy) => (float)Math.Max(1, (IsExplicit ? Remaining : legacy).TotalMilliseconds);
 }
@@ -159,6 +166,7 @@ internal sealed class BrowserSession : IBrowserSession
     private readonly Action _releaseSlot;
     private readonly CancellationTokenSource _deadline;
     private static readonly TimeSpan FailureScreenshotTimeout = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan MinimumFailureScreenshotBudget = TimeSpan.FromMilliseconds(250);
 
     private readonly ConcurrentQueue<ExecutionLogEntry> _pending = new();
     private readonly SemaphoreSlim _flushGate = new(1, 1);
@@ -700,9 +708,9 @@ internal sealed class BrowserSession : IBrowserSession
             var stopwatch = Stopwatch.StartNew();
             var safeDescription = Redact(description);
             Record(ExecutionLogLevel.Debug, "OperationStarted", $"{operation} {safeDescription}", new() { ["operation"] = operation });
+            var budget = new OperationBudget(options?.Timeout ?? defaultBudget, options?.Timeout is not null);
             try
             {
-                var budget = new OperationBudget(options?.Timeout ?? defaultBudget, options?.Timeout is not null);
                 var work = action(budget);
 
                 // With an explicit total deadline, our wait ends at the deadline even if a sub-step overran it. Work
@@ -721,7 +729,7 @@ internal sealed class BrowserSession : IBrowserSession
             catch (BrowserOperationException ex)
             {
                 RecordFailure(operation, safeDescription, ex.Code, stopwatch);
-                await CaptureFailureScreenshotAsync(operation).ConfigureAwait(false);
+                await CaptureFailureScreenshotAsync(operation, budget).ConfigureAwait(false);
                 throw;
             }
             catch (Exception ex) when (ex is PlaywrightException or TimeoutException)
@@ -755,7 +763,7 @@ internal sealed class BrowserSession : IBrowserSession
                 }
 
                 RecordFailure(operation, safeDescription, error.Code, stopwatch);
-                await CaptureFailureScreenshotAsync(operation).ConfigureAwait(false);
+                await CaptureFailureScreenshotAsync(operation, budget).ConfigureAwait(false);
                 throw error;
             }
             finally
@@ -773,17 +781,33 @@ internal sealed class BrowserSession : IBrowserSession
             ["durationMs"] = stopwatch.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture),
         });
 
-    private async Task CaptureFailureScreenshotAsync(string operation)
+    private async Task CaptureFailureScreenshotAsync(string operation, OperationBudget budget)
     {
         if (_options.Screenshots != ScreenshotPolicy.OnFailure || _aborted || _crashed || _page.IsClosed)
         {
             return;
         }
 
+        // With an explicit total deadline (ADR-053, audit defect D2) the failure screenshot is part of the operation:
+        // it is skipped when too little budget remains and otherwise bounded by what remains, so the operation never
+        // returns after its deadline because of diagnostics. Without explicit options the Phase 3 behaviour is unchanged.
+        var timeout = FailureScreenshotTimeout;
+        if (budget.IsExplicit)
+        {
+            if (!budget.TryGetRemaining(out var remaining) || remaining < MinimumFailureScreenshotBudget)
+            {
+                Record(ExecutionLogLevel.Information, "ScreenshotSkipped", "Failure screenshot skipped: the operation deadline is exhausted", new());
+                return;
+            }
+
+            timeout = remaining < timeout ? remaining : timeout;
+        }
+
         try
         {
             // Best effort and short: a stuck page must not delay reporting the actual failure.
-            await CaptureScreenshotAsync(new ScreenshotRequest(Label: $"failure-{operation.ToLowerInvariant()}"), CancellationToken.None, FailureScreenshotTimeout).ConfigureAwait(false);
+            var capture = CaptureScreenshotAsync(new ScreenshotRequest(Label: $"failure-{operation.ToLowerInvariant()}"), CancellationToken.None, timeout);
+            await (budget.IsExplicit ? capture.WaitAsync(timeout, CancellationToken.None) : capture).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is PlaywrightException or TimeoutException or IOException)
         {
@@ -858,7 +882,8 @@ internal sealed class BrowserSession : IBrowserSession
         SelectorKind.Text => scope.GetByText(selector.Value, new LocatorGetByTextOptions { Exact = true }),
         SelectorKind.Label => scope.GetByLabel(selector.Value, new LocatorGetByLabelOptions { Exact = true }),
         SelectorKind.Placeholder => scope.GetByPlaceholder(selector.Value, new LocatorGetByPlaceholderOptions { Exact = true }),
-        SelectorKind.XPath => scope.Locator("xpath=" + (selector.Value.StartsWith('/') ? "." + selector.Value : selector.Value)),
+        // Defence in depth (D3): RowValueSpec already rejects XPath children; XPath can escape the row scope.
+        SelectorKind.XPath => throw new BrowserOperationException(BrowserErrorCode.InvalidSelector, "XPath selectors cannot be scoped to a row.", isTransient: false),
         _ => throw new BrowserOperationException(BrowserErrorCode.InvalidSelector, "Unknown selector kind.", isTransient: false),
     };
 

@@ -451,6 +451,7 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
   - **B5:** `Completed`, or `TimedOut` after `Egress:RevocationTimeoutSeconds` (default 10).
 
   No send syscall begins after Lr, and none is executing after Ta.
+- **Upstream sockets are never closed gracefully,** including at a connection's normal end (Step 2 follow-up, defect D1). A graceful handler close could pre-empt B3 and let queued data drain after Ta.
 - **Fencing:**
   - `EgressRevoked` and `ExecutionFenced` are true only for `Completed`;
   - the barrier runs before the browser context is closed, and `CompleteAsync` only after it;

@@ -197,7 +197,8 @@ public sealed class FixtureServers : IAsyncDisposable
                         "<tr data-testid='row' data-id='C-3'><td>no email cell</td></tr>" +
                         "</tbody></table>" +
                         "<table><tbody><tr data-testid='bad-row'><td data-testid='email'>x</td><td data-testid='email'>y</td></tr></tbody></table>" +
-                        "<p data-testid='empty-indicator'>3 rows</p>"));
+                        "<p data-testid='empty-indicator'>3 rows</p>" +
+                        "<span class='outside-only' data-testid='outside-only'>outside@example.test</span>"));
                     break;
                 case "/many-rows":
                     await ctx.Response.WriteAsync(Html("<ul>" + string.Concat(Enumerable.Range(1, 60).Select(i => $"<li data-testid='item' data-n='{i}'>{i}</li>")) + "</ul>"));

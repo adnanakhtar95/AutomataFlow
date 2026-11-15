@@ -20,6 +20,9 @@ internal enum EgressHookPoint
 
     /// <summary>H-post: after the send returned, before the admission is released.</summary>
     AfterWriteSend,
+
+    /// <summary>Barrier: after B2 (admitted writes drained), before B3 (abortive close).</summary>
+    BeforeAbort,
 }
 
 internal sealed class EgressTestHooks

@@ -139,7 +139,9 @@ Caller cancellation throws `OperationCanceledException` and closes the session, 
   - `BrowserSession.DisposeAsync` runs the barrier BEFORE closing the context;
   - `IBrowserSession.EgressRevoked` is true only for `Completed`;
   - `Dispose()` on an egress session is best effort and never a fence.
-- **`UpstreamChannel`:** the only sender upstream (source-scanned). Every payload chunk (≤ 16 KB) is sent inside a write-gate admission without a cancellation token.
+- **`UpstreamChannel`:** the only sender upstream (source-scanned). Every payload chunk (≤ 16 KB) is sent inside a write-gate admission without a cancellation token. Upstream sockets are only ever closed abortively (RST), also at a connection's normal end (D1).
+- **Deadline:** with an explicit `OperationOptions` deadline, the failure screenshot is skipped (`ScreenshotSkipped` event) or bounded by the remaining budget (D2).
+- **Row children:** `RowValueSpec.OfChildText` rejects XPath because it can escape the row (D3).
 - **Connection ledger:** before any payload, each upstream connection's tuple and OS identity are fsync-appended to a per-incarnation ledger (`Automation:EgressProxy:LedgerDirectory`). The identity is the Linux `SO_COOKIE`, or the Windows owner-module TCP row's `liCreateTimestamp`, matched by tuple and own PID. If the identity or the ledger is unavailable, the connection is aborted unused (fail closed).
 - **Fail-fast sockets:** `TCP_USER_TIMEOUT` (Linux, ms) and `TCP_MAXRT` (Windows, s), `Automation:EgressProxy:UpstreamUserTimeoutSeconds` (default 30). These make stalled connections fail fast and are not a guarantee.
 - **Drain logic:** `AutomataFlow.Automation.Network.Fencing.ConnectionDrain` holds the supervisor's drain decision logic (§7.6.5). The OS socket-table readers and the Linux `SOCK_DESTROY` destroyer are Phase 5.

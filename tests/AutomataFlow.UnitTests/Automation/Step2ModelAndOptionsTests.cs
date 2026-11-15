@@ -72,6 +72,25 @@ public class Step2ModelAndOptionsTests
         Assert.Throws<ArgumentException>(() => RowValueSpec.OfAttribute(name));
     }
 
+    /// <summary>D3: XPath can leave the row (parenthesised expressions, unions, parent/ancestor axes), so it is rejected for row children.</summary>
+    [Theory]
+    [InlineData("//td")]
+    [InlineData("(//td)[1]")]
+    [InlineData("(//td | //p)")]
+    [InlineData("/html/body//td")]
+    public void Row_child_selectors_reject_xpath_because_it_can_escape_the_row(string xpath)
+    {
+        Assert.Throws<ArgumentException>(() => RowValueSpec.OfChildText(ElementSelector.XPath(xpath)));
+    }
+
+    [Fact]
+    public void Row_child_selectors_accept_descendant_scoped_kinds()
+    {
+        Assert.Equal(RowValueKind.ChildText, RowValueSpec.OfChildText(ElementSelector.Css("td.email")).Kind);
+        Assert.Equal(RowValueKind.ChildText, RowValueSpec.OfChildText(ElementSelector.TestId("email")).Kind);
+        Assert.Equal(RowValueKind.ChildText, RowValueSpec.OfChildText(ElementSelector.Text("x")).Kind);
+    }
+
     [Fact]
     public void A_row_snapshot_with_a_count_but_no_values_is_truncated()
     {
