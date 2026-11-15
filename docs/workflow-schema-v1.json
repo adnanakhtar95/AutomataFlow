@@ -1,0 +1,272 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://automataflow.local/schemas/workflow-v1.json",
+  "title": "AutomataFlow workflow definition, schemaVersion 1",
+  "description": "Editor and tooling aid (docs/PHASE4_PLAN.md §1.5). The hand-written validator in Application is authoritative; rules JSON Schema cannot express (sinks, dominance, finalization, URL grammar, side-effect placement, reconciliation keys) exist only there. Every numeric bound is parity-tested against WorkflowLimits / SchemaV1Defaults (ADR-055).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "name", "allowedHosts", "steps"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "name": { "type": "string", "minLength": 3, "maxLength": 64, "pattern": "^[a-z][a-z0-9-]*$" },
+    "description": { "type": "string", "maxLength": 500 },
+    "timeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 3600, "default": 120 },
+    "parameters": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/parameter" } },
+    "allowedHosts": { "type": "array", "minItems": 1, "maxItems": 20, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 300 } },
+    "inputs": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/input" } },
+    "secrets": { "type": "array", "maxItems": 20, "uniqueItems": true, "items": { "$ref": "#/$defs/declaredName" } },
+    "maskSelectors": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/selector" } },
+    "reconciliation": { "$ref": "#/$defs/reconciliation" },
+    "setup": { "$ref": "#/$defs/steps" },
+    "reconcile": { "$ref": "#/$defs/steps" },
+    "steps": { "$ref": "#/$defs/steps" }
+  },
+  "dependentRequired": { "reconcile": ["reconciliation"], "reconciliation": ["reconcile"] },
+  "$defs": {
+    "declaredName": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z][A-Za-z0-9]*$" },
+    "template": { "type": "string", "maxLength": 2000 },
+    "selectorValue": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "attributeName": { "type": "string", "minLength": 1, "maxLength": 100, "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$" },
+    "urlPattern": { "type": "string", "minLength": 1, "maxLength": 500, "pattern": "^(https?://|\\*\\*/)[^?{}\\[\\]\\\\]*$" },
+    "parameter": {
+      "type": "object", "additionalProperties": false, "required": ["name", "type"],
+      "properties": { "name": { "$ref": "#/$defs/declaredName" }, "type": { "enum": ["url", "string"] } }
+    },
+    "input": {
+      "type": "object", "additionalProperties": false, "required": ["name", "type"],
+      "properties": {
+        "name": { "$ref": "#/$defs/declaredName" },
+        "type": { "enum": ["string", "email", "integer", "decimal", "boolean", "date", "file"] },
+        "required": { "type": "boolean", "default": false },
+        "maxLength": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 1000 },
+        "sensitive": { "type": "boolean", "default": false }
+      }
+    },
+    "reconciliation": {
+      "type": "object", "additionalProperties": false, "required": ["evidence", "matchKey"],
+      "properties": {
+        "evidence": { "enum": ["advisory", "authoritative"] },
+        "matchKey": { "enum": ["operationId", "businessKey"] },
+        "authority": {
+          "type": "object", "additionalProperties": false, "required": ["maxCommitLatencySeconds", "contractReference"],
+          "properties": {
+            "maxCommitLatencySeconds": { "type": "integer", "minimum": 1, "maximum": 3600 },
+            "contractReference": { "type": "string", "minLength": 10, "maxLength": 500 },
+            "maxEvidenceAgeSeconds": { "type": "integer", "minimum": 30, "maximum": 3600, "default": 300 }
+          }
+        }
+      },
+      "if": { "properties": { "evidence": { "const": "authoritative" } } },
+      "then": { "required": ["authority"] },
+      "else": { "not": { "required": ["authority"] } }
+    },
+    "steps": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/step" } },
+    "step": {
+      "type": "object", "additionalProperties": false, "required": ["id", "type", "config"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[a-z][a-z0-9-]*$" },
+        "type": { "enum": ["navigate", "click", "fill", "select", "wait", "extract", "screenshot", "upload", "download", "condition", "delay", "captureResult", "reconcileMatch"] },
+        "config": { "type": "object" },
+        "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 120000 },
+        "onError": { "enum": ["fail", "continue"], "default": "fail" },
+        "sideEffect": { "type": "boolean" },
+        "idempotency": {
+          "type": "object", "additionalProperties": false, "required": ["key", "guarantee"],
+          "properties": { "key": { "const": "{{operation.id}}" }, "guarantee": { "enum": ["targetEnforced"] } }
+        },
+        "description": { "type": "string", "maxLength": 500 }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "const": "navigate" } } }, "then": { "properties": { "config": { "$ref": "#/$defs/navigate" } } } },
+        { "if": { "properties": { "type": { "const": "click" } } }, "then": { "properties": { "config": { "$ref": "#/$defs/click" } } } },
+        { "if": { "properties": { "type": { "const": "fill" } } }, "then": { "properties": { "config": { "$ref": "#/$defs/fill" } } } },
+        { "if": { "properties": { "type": { "const": "select" } } }, "then": { "properties": { "config": { "$ref": "#/$defs/select" } } } },
+        { "if": { "properties": { "type": { "const": "wait" } } }, "then": { "properties": { "config": { "$ref": "#/$defs/wait" } } } },
+        { "if": { "properties": { "type": { "const": "extract" } } }, "then": { "properties": { "config": { "$ref": "#/$defs/extract" } } } },
+        { "if": { "properties": { "type": { "const": "screenshot" } } }, "then": { "properties": { "config": { "$ref": "#/$defs/screenshot" } } } },
+        { "if": { "properties": { "type": { "const": "upload" } } }, "then": { "properties": { "config": { "$ref": "#/$defs/upload" } } } },
+        { "if": { "properties": { "type": { "const": "download" } } }, "then": { "properties": { "config": { "$ref": "#/$defs/download" } } } },
+        { "if": { "properties": { "type": { "const": "condition" } } }, "then": { "properties": { "config": { "$ref": "#/$defs/condition" } } } },
+        { "if": { "properties": { "type": { "const": "delay" } } }, "then": { "properties": { "config": { "$ref": "#/$defs/delay" } } } },
+        { "if": { "properties": { "type": { "const": "captureResult" } } }, "then": { "properties": { "config": { "$ref": "#/$defs/captureResult" } } } },
+        { "if": { "properties": { "type": { "const": "reconcileMatch" } } }, "then": { "properties": { "config": { "$ref": "#/$defs/reconcileMatch" } } } },
+        { "if": { "properties": { "onError": { "const": "continue" } }, "required": ["onError"] },
+          "then": { "properties": { "type": { "enum": ["wait", "extract", "screenshot", "fill", "select", "condition"] } } } },
+        { "if": { "properties": { "sideEffect": { "const": true } }, "required": ["sideEffect"] },
+          "then": { "properties": { "type": { "enum": ["click", "upload"] } } } }
+      ]
+    },
+    "selector": {
+      "type": "object", "additionalProperties": false, "minProperties": 1, "maxProperties": 2,
+      "properties": {
+        "testId": { "$ref": "#/$defs/selectorValue" },
+        "css": { "$ref": "#/$defs/selectorValue" },
+        "role": { "$ref": "#/$defs/selectorValue" },
+        "name": { "$ref": "#/$defs/selectorValue" },
+        "text": { "$ref": "#/$defs/selectorValue" },
+        "label": { "$ref": "#/$defs/selectorValue" },
+        "placeholder": { "$ref": "#/$defs/selectorValue" },
+        "xpath": { "$ref": "#/$defs/selectorValue" }
+      },
+      "oneOf": [
+        { "required": ["testId"] }, { "required": ["css"] }, { "required": ["role"] }, { "required": ["text"] },
+        { "required": ["label"] }, { "required": ["placeholder"] }, { "required": ["xpath"] }
+      ],
+      "dependentRequired": { "name": ["role"] }
+    },
+    "navigate": {
+      "type": "object", "additionalProperties": false, "required": ["url"],
+      "properties": {
+        "url": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "acceptStatus": { "type": "array", "maxItems": 10, "uniqueItems": true, "items": { "type": "integer", "minimum": 400, "maximum": 599 } }
+      }
+    },
+    "click": {
+      "type": "object", "additionalProperties": false, "required": ["selector"],
+      "properties": { "selector": { "$ref": "#/$defs/selector" }, "waitForNavigation": { "type": "boolean", "default": false } }
+    },
+    "fill": {
+      "type": "object", "additionalProperties": false, "required": ["selector", "value"],
+      "properties": { "selector": { "$ref": "#/$defs/selector" }, "value": { "$ref": "#/$defs/template" } }
+    },
+    "select": {
+      "type": "object", "additionalProperties": false, "required": ["selector"],
+      "properties": {
+        "selector": { "$ref": "#/$defs/selector" },
+        "value": { "$ref": "#/$defs/template" },
+        "label": { "$ref": "#/$defs/template" },
+        "index": { "type": "integer", "minimum": 0, "maximum": 1000 }
+      },
+      "oneOf": [{ "required": ["value"] }, { "required": ["label"] }, { "required": ["index"] }]
+    },
+    "wait": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "for": { "enum": ["visible", "hidden", "attached", "detached", "load"] },
+        "selector": { "$ref": "#/$defs/selector" },
+        "url": { "$ref": "#/$defs/urlPattern" }
+      },
+      "oneOf": [{ "required": ["for"] }, { "required": ["url"] }]
+    },
+    "extract": {
+      "type": "object", "additionalProperties": false, "required": ["selector", "source"],
+      "properties": {
+        "selector": { "$ref": "#/$defs/selector" },
+        "source": { "enum": ["text", "attribute"] },
+        "attribute": { "$ref": "#/$defs/attributeName" },
+        "sensitive": { "type": "boolean", "default": false },
+        "maxLength": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 1000 }
+      }
+    },
+    "screenshot": {
+      "type": "object", "additionalProperties": false, "required": ["label"],
+      "properties": { "label": { "type": "string", "minLength": 1, "maxLength": 100 }, "fullPage": { "type": "boolean", "default": false } }
+    },
+    "upload": {
+      "type": "object", "additionalProperties": false, "required": ["selector", "file", "allowedExtensions"],
+      "properties": {
+        "selector": { "$ref": "#/$defs/selector" },
+        "file": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "allowedExtensions": { "type": "array", "minItems": 1, "maxItems": 20, "uniqueItems": true, "items": { "type": "string", "pattern": "^\\.[a-z0-9]{1,10}$" } },
+        "maxBytes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "download": {
+      "type": "object", "additionalProperties": false, "required": ["trigger"],
+      "properties": { "trigger": { "$ref": "#/$defs/selector" } }
+    },
+    "condition": {
+      "type": "object", "additionalProperties": false, "required": ["if", "then"],
+      "properties": {
+        "if": { "$ref": "#/$defs/expression" },
+        "then": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/step" } },
+        "else": { "type": "array", "items": { "$ref": "#/$defs/step" } }
+      }
+    },
+    "expression": {
+      "type": "object", "minProperties": 1, "maxProperties": 1, "additionalProperties": false,
+      "properties": {
+        "all": { "type": "array", "minItems": 1, "maxItems": 10, "items": { "$ref": "#/$defs/expression" } },
+        "any": { "type": "array", "minItems": 1, "maxItems": 10, "items": { "$ref": "#/$defs/expression" } },
+        "not": { "$ref": "#/$defs/expression" },
+        "elementExists": { "$ref": "#/$defs/selector" },
+        "elementVisible": { "$ref": "#/$defs/selector" },
+        "elementCountAtLeast": {
+          "type": "object", "additionalProperties": false, "required": ["selector", "count"],
+          "properties": { "selector": { "$ref": "#/$defs/selector" }, "count": { "type": "integer", "minimum": 1, "maximum": 1000 } }
+        },
+        "textEquals": { "$ref": "#/$defs/textPredicate" },
+        "textContains": { "$ref": "#/$defs/textPredicate" },
+        "attributeEquals": {
+          "type": "object", "additionalProperties": false, "required": ["selector", "attribute", "value"],
+          "properties": {
+            "selector": { "$ref": "#/$defs/selector" }, "attribute": { "$ref": "#/$defs/attributeName" },
+            "value": { "$ref": "#/$defs/template" }, "ignoreCase": { "type": "boolean", "default": false }
+          }
+        },
+        "urlMatches": { "$ref": "#/$defs/urlPattern" },
+        "valueEquals": { "$ref": "#/$defs/valuePredicate" },
+        "valueContains": { "$ref": "#/$defs/valuePredicate" },
+        "valueStartsWith": { "$ref": "#/$defs/valuePredicate" },
+        "isEmpty": { "$ref": "#/$defs/template" }
+      }
+    },
+    "textPredicate": {
+      "type": "object", "additionalProperties": false, "required": ["selector", "value"],
+      "properties": { "selector": { "$ref": "#/$defs/selector" }, "value": { "$ref": "#/$defs/template" }, "ignoreCase": { "type": "boolean", "default": false } }
+    },
+    "valuePredicate": {
+      "type": "object", "additionalProperties": false, "required": ["left", "right"],
+      "properties": { "left": { "$ref": "#/$defs/template" }, "right": { "$ref": "#/$defs/template" }, "ignoreCase": { "type": "boolean", "default": false } }
+    },
+    "delay": {
+      "type": "object", "additionalProperties": false, "required": ["milliseconds"],
+      "properties": { "milliseconds": { "type": "integer", "minimum": 1, "maximum": 30000 } }
+    },
+    "captureResult": {
+      "type": "object", "additionalProperties": false, "minProperties": 1,
+      "properties": {
+        "fields": {
+          "type": "object", "maxProperties": 50,
+          "propertyNames": { "maxLength": 64, "pattern": "^[A-Za-z][A-Za-z0-9_]*$" },
+          "additionalProperties": { "type": "string", "maxLength": 2000 }
+        },
+        "outcome": { "$ref": "#/$defs/outcome" }
+      }
+    },
+    "outcome": {
+      "type": "object", "additionalProperties": false, "required": ["status"],
+      "properties": {
+        "status": { "enum": ["succeeded", "failed"] },
+        "code": { "type": "string", "maxLength": 64, "pattern": "^[A-Z][A-Za-z0-9]*$" },
+        "transient": { "type": "boolean", "default": false },
+        "transientWhen": { "$ref": "#/$defs/expression" }
+      },
+      "if": { "properties": { "status": { "const": "failed" } } },
+      "then": { "required": ["code"], "not": { "required": ["transient", "transientWhen"] } },
+      "else": { "properties": { "code": false, "transient": false, "transientWhen": false } }
+    },
+    "reconcileMatch": {
+      "type": "object", "additionalProperties": false, "required": ["rows", "key", "equals", "emptyIndicator"],
+      "properties": {
+        "rows": { "$ref": "#/$defs/selector" },
+        "key": {
+          "type": "object", "additionalProperties": false, "minProperties": 1, "maxProperties": 1,
+          "properties": { "attribute": { "$ref": "#/$defs/attributeName" }, "text": { "$ref": "#/$defs/selector" } }
+        },
+        "equals": { "$ref": "#/$defs/template" },
+        "ignoreCase": { "type": "boolean", "default": false },
+        "emptyIndicator": { "$ref": "#/$defs/selector" },
+        "maxRows": { "type": "integer", "minimum": 1, "maximum": 50, "default": 20 },
+        "fields": {
+          "type": "object", "maxProperties": 50,
+          "propertyNames": { "maxLength": 64, "pattern": "^[A-Za-z][A-Za-z0-9_]*$" },
+          "additionalProperties": {
+            "type": "object", "additionalProperties": false, "required": ["attribute"],
+            "properties": { "attribute": { "$ref": "#/$defs/attributeName" } }
+          }
+        }
+      }
+    }
+  }
+}
