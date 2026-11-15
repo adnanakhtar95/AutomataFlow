@@ -621,6 +621,28 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
   - `Platform:Mode` (Development / SelfHosted / Hosted) mirrors the engine's mode, because the Api cannot reference Automation.
 - **Secrets:** stored only as ASP.NET Core Data Protection payloads whose purpose includes the organization id, so a payload copied into another organization cannot be decrypted there. The API is write-only for values (list names, set, delete; Admin+). The Worker decrypts a secret only inside the attempt (`OrganizationSecretProvider`, the engine's `ISecretProvider`). Keys live in `DataProtection:KeysDirectory`, a shared, access-restricted volume read by both the Api and the Worker. **Package:** `Microsoft.AspNetCore.DataProtection` 10.0.15 (MIT).
 - **Proof of application-layer scoping:** the cross-tenant workflow and secret tests run twice: against the normal Api, and against an Api whose DbContext has the query-filter backstop disabled. A sanity test proves that the second host really runs with the filters off.
+## ADR-070 — Record files and idempotent job creation (Phase 5 step 4)
+**Status:** Accepted (2026-11-15).
+- **Readers:** `RecordImport` (Application, `RecordFiles`; deliberately outside the pure workflow-definition code, whose source rule forbids `JsonSerializer`) streams rows one at a time:
+  - **CSV:** a strict RFC 4180 state machine with a required header (no duplicate, blank or space-padded names), CRLF/LF/CR line ends, quoted fields with doubled quotes, a rejected stray quote, and an optional UTF-8 BOM;
+  - **JSON:** an array of flat objects whose scalars are converted to text, read with `DeserializeAsyncEnumerable`;
+  - **encoding:** strict UTF-8; invalid bytes are refused;
+  - **limits:** bytes are counted while reading (the declared size is not trusted); records, columns and cell length are checked per row. Server-configurable under `Imports:*` and validated on start;
+  - **errors:** a code and a position, never a cell value.
+- **Upload checks (Api):** `.csv` or `.json` only, with a matching content type (415 otherwise); request and multipart size limits; sanitized file names, kept for display only; the file is parsed from the request buffer and never stored.
+- **Columns:** CSV headers must be declared inputs, otherwise the whole file is rejected (`column-unknown`). The opt-in `ignoreUnknownColumns` drops undeclared columns, for example the test-expectation column of `samples/demo-customers.csv`.
+- **Job creation:**
+  - only a **published** version can be used, and its hash is re-verified;
+  - parameters are exactly the declared ones, and url parameters must be canonicalizable origins (the Worker binds them again);
+  - each row is validated by `RecordValidator`: valid rows become Pending records with a fresh OperationId, invalid ones become `Invalid` records holding error paths and codes only;
+  - inputs are stored as Data Protection payloads when the workflow declares a sensitive input;
+  - rows are saved in batches of 500 with the change tracker cleared after each batch (bounded memory), all **in one transaction**, so a malformed file creates nothing;
+  - a usage record (`records.imported`) is written.
+- **Idempotency:** `Idempotency-Key` is unique per organization. The job stores a SHA-256 request fingerprint (version, format, sorted parameters, options, column mode and file content):
+  - a replay with the same fingerprint returns the original job (200, `replayed`);
+  - a different request with the same key gets 409;
+  - concurrent requests with the same key are serialized by the unique index, and the losers answer as replays (tested with 6 concurrent uploads: one job, 50 records).
+- **Reads:** job views count records by status. Record listings return row number, OperationId, status, attempts, error code, result and validation codes, and **never input values**.
 ## Resolved from the approval round (2026-11-11)
 1. SDK: selected from inspection, not blindly pinned (ADR-004). 2. PostgreSQL: Docker `postgres:18`, port 5433, volume (ADR-013). 3. Git initialized; commit after each verified phase; no secrets or generated artifacts. 4. Identity + JWT (ADR-010). 5. Hand-written validators (ADR-016). 6. Razor Pages Demo CRM (ADR-011). 7. Folder layout `src/ tests/ web/ deploy/ docs/`, React in `web/automataflow-web`. 8. 16-day target, 16–20 realistic; quality over deadline. 9. Frontend libraries deferred (ADR-019). 10. Playwright Chromium download approved for Phase 3.
 

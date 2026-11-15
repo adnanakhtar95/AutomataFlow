@@ -222,6 +222,22 @@ public abstract class WorkflowCrossTenantTests(PlatformApi api)
         await using var db = api.Database.Context(a.Organization());
         Assert.Equal("Draft", (await db.WorkflowVersions.SingleAsync(v => v.Id == version)).Status.ToString());
     }
+
+    [Fact]
+    public async Task Another_organization_can_neither_read_jobs_nor_run_a_foreign_version()
+    {
+        var (_, a) = await api.RegisterAsync("jobs-a");
+        var (_, b) = await api.RegisterAsync("jobs-b");
+        var version = await JobApiTests.PublishedVersionAsync(api.Client(a.AccessToken), "a-jobs");
+        var created = await JobApiTests.UploadAsync(api.Client(a.AccessToken), version, JobApiTests.Header + "\n" + JobApiTests.Row(1) + "\n");
+        var jobId = JsonNode.Parse(await created.Content.ReadAsStringAsync())!["jobId"]!.GetValue<Guid>();
+        var asB = api.Client(b.AccessToken);
+
+        Assert.Equal(HttpStatusCode.NotFound, (await asB.GetAsync($"/api/v1/jobs/{jobId}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await asB.GetAsync($"/api/v1/jobs/{jobId}/records")).StatusCode);
+        Assert.DoesNotContain(jobId.ToString(), await asB.GetStringAsync("/api/v1/jobs"), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(HttpStatusCode.NotFound, (await JobApiTests.UploadAsync(asB, version, JobApiTests.Header + "\n" + JobApiTests.Row(2) + "\n")).StatusCode);
+    }
 }
 
 internal static class TokenExtensions

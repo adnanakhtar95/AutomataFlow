@@ -68,6 +68,7 @@ internal sealed class JobConfiguration : IEntityTypeConfiguration<Job>
         builder.Property(j => j.ParametersJson).HasColumnType("jsonb").IsRequired();
         builder.Property(j => j.IdempotencyKey).HasMaxLength(Job.IdempotencyKeyMaxLength);
         builder.Property(j => j.SourceName).HasMaxLength(Job.SourceNameMaxLength);
+        builder.Property(j => j.RequestFingerprint).HasMaxLength(64);
         builder.HasIndex(j => new { j.OrganizationId, j.IdempotencyKey }).IsUnique().HasFilter("\"IdempotencyKey\" IS NOT NULL");
         builder.HasIndex(j => new { j.OrganizationId, j.CreatedAt });
         builder.HasIndex(j => j.Status).HasFilter("\"Status\" IN ('Pending', 'Running')");

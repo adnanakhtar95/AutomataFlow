@@ -46,6 +46,11 @@ public static class DependencyInjection
         services.AddScoped<SecretService>();
         services.AddScoped<OrganizationSecretProvider>();
         services.AddScoped<WorkflowService>();
+        services.AddScoped<Jobs.JobService>();
+        services.AddOptions<Jobs.ImportOptions>().Bind(configuration.GetSection(Jobs.ImportOptions.SectionName))
+            .Validate(o => o.MaxBytes is > 0 and <= 100L * 1024 * 1024 && o.MaxRecords is > 0 and <= 1_000_000 && o.MaxColumns is > 0 and <= 100 && o.MaxCellChars is > 0 and <= 10_000,
+                "Imports limits are out of range (MaxBytes <= 100 MB, MaxRecords <= 1,000,000, MaxColumns <= 100, MaxCellChars <= 10,000).")
+            .ValidateOnStart();
         services.AddOptions<PlatformOptions>().Bind(configuration.GetSection(PlatformOptions.SectionName));
 
         return services;

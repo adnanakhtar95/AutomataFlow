@@ -64,6 +64,9 @@ public sealed class Job : IOrganizationOwned
     /// <summary>Sanitized name of the uploaded file, for display only.</summary>
     public string? SourceName { get; private set; }
 
+    /// <summary>SHA-256 over version, parameters, options and file content: a replayed idempotency key must match it.</summary>
+    public string? RequestFingerprint { get; private set; }
+
     public int TotalRecords { get; private set; }
 
     public int InvalidRecords { get; private set; }
@@ -77,7 +80,8 @@ public sealed class Job : IOrganizationOwned
         Guid createdBy,
         string? idempotencyKey,
         string? sourceName,
-        DateTimeOffset createdAt)
+        DateTimeOffset createdAt,
+        string? requestFingerprint = null)
     {
         if (organizationId == Guid.Empty || workflowId == Guid.Empty || workflowVersionId == Guid.Empty || createdBy == Guid.Empty)
         {
@@ -110,6 +114,7 @@ public sealed class Job : IOrganizationOwned
             CreatedAt = createdAt,
             IdempotencyKey = idempotencyKey,
             SourceName = sourceName,
+            RequestFingerprint = requestFingerprint,
         };
     }
 

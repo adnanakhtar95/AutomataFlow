@@ -158,6 +158,10 @@ namespace AutomataFlow.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("jsonb");
 
+                    b.Property<string>("RequestFingerprint")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<string>("SourceName")
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
