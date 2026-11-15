@@ -29,7 +29,7 @@ public class ValidatedWorkflowTests
         var stored = Valid(Full);
         var reformatted = With(Full, _ => { }); // compact, re-serialized by a different writer
 
-        var result = ValidatedWorkflow.Create(reformatted, stored.DefinitionHash);
+        var result = ValidatedWorkflow.Load(reformatted, stored.DefinitionHash);
 
         Assert.True(result.IsValid);
         Assert.Equal(stored.DefinitionHash, result.Workflow!.DefinitionHash);
@@ -41,7 +41,7 @@ public class ValidatedWorkflowTests
         var stored = Valid(Full);
         var tampered = With(Full, r => r["allowedHosts"] = new JsonArray("https://attacker.example.test"));
 
-        var result = ValidatedWorkflow.Create(tampered, stored.DefinitionHash);
+        var result = ValidatedWorkflow.Load(tampered, stored.DefinitionHash);
 
         Assert.False(result.IsValid);
         Assert.Null(result.Workflow);
@@ -56,7 +56,7 @@ public class ValidatedWorkflowTests
     [InlineData("")]
     public void A_malformed_expected_hash_is_refused_before_parsing(string hash)
     {
-        var result = ValidatedWorkflow.Create(Minimal, hash);
+        var result = ValidatedWorkflow.Load(Minimal, hash);
 
         Assert.Null(result.Workflow);
         Assert.Equal(WorkflowErrorCodes.HashMalformed, Assert.Single(result.Errors).Code);
@@ -69,7 +69,7 @@ public class ValidatedWorkflowTests
         var invalid = With(r => r["extra"] = 1);
         var hashOfInvalidCanonicalForm = CanonicalJson.ComputeHash(CanonicalJson.Serialize(StrictJsonParser.Parse(Encoding.UTF8.GetBytes(invalid)).Root!));
 
-        var result = ValidatedWorkflow.Create(invalid, hashOfInvalidCanonicalForm);
+        var result = ValidatedWorkflow.Load(invalid, hashOfInvalidCanonicalForm);
 
         Assert.Null(result.Workflow);
         Assert.Contains(result.Errors, e => e.Code == WorkflowErrorCodes.UnknownProperty);
@@ -94,8 +94,8 @@ public class ValidatedWorkflowTests
     [MemberData(nameof(InvalidDefinitions))]
     public void Invalid_input_never_produces_a_validated_workflow(string json)
     {
-        var fromText = ValidatedWorkflow.Create(json);
-        var fromBytes = ValidatedWorkflow.Create(Encoding.UTF8.GetBytes(json));
+        var fromText = ValidatedWorkflow.CreateForPublication(json);
+        var fromBytes = ValidatedWorkflow.CreateForPublication(Encoding.UTF8.GetBytes(json));
 
         Assert.False(fromText.IsValid);
         Assert.Null(fromText.Workflow);
@@ -109,7 +109,7 @@ public class ValidatedWorkflowTests
     {
         var oversized = new string(' ', WorkflowLimits.MaxDefinitionBytes) + Minimal;
 
-        var result = ValidatedWorkflow.Create(oversized);
+        var result = ValidatedWorkflow.CreateForPublication(oversized);
 
         Assert.Equal("json-too-large", Assert.Single(result.Errors).Code);
     }
@@ -117,7 +117,7 @@ public class ValidatedWorkflowTests
     [Fact]
     public void Text_with_a_lone_surrogate_is_rejected()
     {
-        var result = ValidatedWorkflow.Create(With(r => r["description"] = "ok").Replace("ok", "o\ud800k", StringComparison.Ordinal));
+        var result = ValidatedWorkflow.CreateForPublication(With(r => r["description"] = "ok").Replace("ok", "o\ud800k", StringComparison.Ordinal));
 
         Assert.Equal("json-invalid-string", Assert.Single(result.Errors).Code);
     }
@@ -126,7 +126,7 @@ public class ValidatedWorkflowTests
     public void Text_and_byte_inputs_produce_the_same_workflow_identity()
     {
         var fromText = Valid(Full);
-        var fromBytes = ValidatedWorkflow.Create(Encoding.UTF8.GetBytes(Full)).Workflow!;
+        var fromBytes = ValidatedWorkflow.CreateForPublication(Encoding.UTF8.GetBytes(Full)).Workflow!;
 
         Assert.Equal(fromText.DefinitionHash, fromBytes.DefinitionHash);
     }
@@ -136,7 +136,7 @@ public class ValidatedWorkflowTests
     {
         var original = Valid(Full);
 
-        var reloaded = ValidatedWorkflow.Create(original.CanonicalJson, original.DefinitionHash);
+        var reloaded = ValidatedWorkflow.Load(original.CanonicalJson, original.DefinitionHash);
 
         Assert.True(reloaded.IsValid);
         Assert.Equal(original.CanonicalUtf8.ToArray(), reloaded.Workflow!.CanonicalUtf8.ToArray());
@@ -146,7 +146,7 @@ public class ValidatedWorkflowTests
     public void Mutating_the_caller_buffer_after_creation_does_not_affect_the_workflow()
     {
         var buffer = Encoding.UTF8.GetBytes(Minimal);
-        var workflow = ValidatedWorkflow.Create(buffer).Workflow!;
+        var workflow = ValidatedWorkflow.CreateForPublication(buffer).Workflow!;
         var hash = workflow.DefinitionHash;
         var canonical = workflow.CanonicalJson;
 

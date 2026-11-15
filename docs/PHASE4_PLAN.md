@@ -1286,8 +1286,8 @@ After a side effect, the engine cannot tell "failed before saving" from "saved, 
 - **Deterministic hash:** `DefinitionHash` = `"sha256:" + lowercase hex` of the canonical form (§16 D5). The algorithm prefix leaves room for a future algorithm change via a new ADR.
 - **Where it is verified:**
   1. **At publish**, computed and stored.
-  2. **On load:** `ValidatedWorkflow.Create(definitionJson, expectedHash)` recomputes it from the parsed definition and refuses a mismatch (`WorkflowTampered`). There is no other way to construct a `ValidatedWorkflow`.
-  3. **At execution start:** the executor recomputes it from the canonical bytes held by the `ValidatedWorkflow` and compares again.
+  2. **On load:** `ValidatedWorkflow.Load(definitionJson, recordedHash)` (hash mandatory) recomputes it from the parsed definition and refuses a mismatch (`WorkflowTampered`). New definitions use `ValidatedWorkflow.CreateForPublication(definitionJson)`, which computes the hash to be stored. There is no other way to construct a `ValidatedWorkflow` (ADR-061).
+  3. **At execution start:** the executor calls `VerifyAgainst(recordedHash)`, which recomputes the hash from the canonical bytes held by the `ValidatedWorkflow` and compares it with the hash recorded for the pinned `WorkflowVersion` (external to the object). `VerifyIntegrity()` is only a self-consistency check.
 - **Recorded per attempt:** the hash and version are part of the attempt snapshot (§10.5), so evidence is always bound to the definition that produced it.
 - **Formatting-independent:** the hash is computed over the *parsed* definition, so whitespace or property-order changes in storage do not change workflow identity.
 - **`ValidatedWorkflow`** is deeply immutable (records, read-only collections). Jobs (Phase 5) reference a specific `WorkflowVersion` id, never a "latest" pointer.
@@ -1789,7 +1789,9 @@ It runs against `InMemoryAttemptJournal` in Phase 4, and unchanged against Postg
 
    **Deliberately left to later steps:** `config` is kept as an immutable raw object and typed per action in step 5; `allowedHosts` gets structural checks only (canonical origins and templates in step 4); `sideEffect`/`onError`/idempotency placement, the side-effect timeout minimum, finalization and condition-branch step counting are step 5.
 
-   **Hash semantics:** the hash covers the definition as written after parsing, so an explicit default such as `"timeoutSeconds": 120` is a different definition from an omitted one, while formatting, property order and escaping are not.)
+   **Hash semantics:** the hash covers the definition as written after parsing, so an explicit default such as `"timeoutSeconds": 120` is a different definition from an omitted one, while formatting, property order and escaping are not.
+
+   **Audit follow-up (ADR-061):** M1 lazy diagnostic paths (allocation-bounded worst case); M2 `CreateForPublication` / `Load(json, recordedHash)`; M3 frozen `SchemaV1Defaults`; L1 loop/regex keys rejected only as constructs; L2 `VerifyAgainst`; L3 one hash-format definition; L4 schema-version consistency and timestamp ordering in `WorkflowVersion`; L5 escaped paths and at most 100 errors; L6 ADR-061.)
 5. [ ] Hand-written validator covers, recursively for nested branches:
    - structure and all 13 action configs;
    - templates, dominance, URL grammar and canonical origins, sink rules, parameters;

@@ -500,6 +500,21 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
 - **Tests:**
   - Phase 4: V1–V12 (V12 shows that socket destruction is not delivery), write gate WG1–WG6 (including deterministic pauses between the final admission check and the send), horizon races H1–H4 (including a negative control);
   - Phase 5: P7–P13 (lingering sockets, trickling peer, destroy capability, ledger problems, connection identity and port reuse P11a–P11f, below-socket queueing with `netem`, fail-closed matrix).
+
+## ADR-061 — Workflow definition identity, loading and diagnostics (Phase 4 step 3 and its audit follow-up)
+**Status:** Accepted (2026-11-15; implements ADR-041 and ADR-042; follow-up to the read-only audit of `8392cfd`).
+- **Two entry points, no third:**
+  - `ValidatedWorkflow.CreateForPublication(json)` validates a new definition and **computes** its hash;
+  - `ValidatedWorkflow.Load(json, recordedHash)` is the only way to use a stored definition. The recorded hash is mandatory; the definition is re-parsed and re-validated, the hash recomputed and a mismatch refused (`WorkflowTampered`).
+  - At execution start, `VerifyAgainst(recordedHash)` compares the canonical bytes with the hash recorded **outside** the object (the pinned version). `VerifyIntegrity()` is only a self-consistency check.
+- **What the hash identifies:** the canonical form of the definition **as written**, after strict parsing. Formatting, property order and escaping do not change it; an explicit default (`"timeoutSeconds": 120`) is a different definition from an omitted one.
+- **Frozen defaults:** because omitted properties take their meaning from code, the schemaVersion 1 defaults live in `SchemaV1Defaults`, separate from `WorkflowLimits`, pinned by literal-value tests. Changing a default requires a new schemaVersion.
+- **Domain:** `WorkflowVersion` checks the hash **format** only (one definition, `DefinitionHashFormat`, shared with Application), that the declared schema version equals the definition's top-level `schemaVersion`, and that lifecycle timestamps never go backwards. A well-formed hash is never treated as proof; trust comes only from `Load`.
+- **Parser limits** (in `WorkflowLimits`, ADR-055): JSON depth 32; any string 2,048 chars; any property name 64 chars; at most 100 reported errors (one extra `too-many-errors` entry marks truncation).
+- **Linear cost:** JSON paths are kept as segment stacks and formatted only when an error is reported, so no per-value allocation grows with nesting depth (worst-case input is tested with an allocation bound).
+- **Safe diagnostics:** property names that are not plain identifiers are written as `$['…']` with every character outside printable ASCII, quotes and backslashes escaped as `\uXXXX`. Paths and messages never contain control characters and are unambiguous.
+- **Loops and regular expressions (ADR-042):** rejected as **constructs**, i.e. as property names in structural positions, matched case-insensitively. Keys of author-named data maps (`captureResult.fields`, `reconcileMatch.fields`) are data and may use any name; values inside those maps are still checked. From step 5, closed per-action config schemas reject every unknown structural key.
+- **Enum names:** C# member names avoid type names (`Text`, `WholeNumber`, `DecimalNumber`); the JSON spelling is unchanged and defined once in `WorkflowJsonNames`.
 ---
 
 ## Resolved from the approval round (2026-11-11)
@@ -512,4 +527,4 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
 - **Verification:** specification approval does not waive any implementation or platform-specific verification. A safety guarantee is claimed as implemented only once code and tests demonstrate it.
 
 ## Pending approval
-None at this time. (Each Phase 4 implementation step is reviewed by the user before the next step starts.)
+None at this time. On 2026-11-15 the user authorized the Step 3 audit follow-up and Phase 4 steps 4, 5 and 6 to be completed consecutively, with one consolidated report after step 6.

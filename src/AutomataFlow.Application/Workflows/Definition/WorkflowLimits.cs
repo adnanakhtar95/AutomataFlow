@@ -26,6 +26,9 @@ public static class WorkflowLimits
     /// <summary>Hard cap for any JSON property name.</summary>
     public const int MaxJsonPropertyNameChars = 64;
 
+    /// <summary>Maximum number of validation errors reported for one definition (one extra entry marks truncation).</summary>
+    public const int MaxValidationErrors = 100;
+
     // ----- Definition structure -----
 
     public const int MinNameChars = 3;
@@ -36,7 +39,6 @@ public static class WorkflowLimits
 
     public const int MinTimeoutSeconds = 1;
     public const int MaxTimeoutSeconds = 3_600;
-    public const int DefaultTimeoutSeconds = 120;
 
     /// <summary>Total steps including setup, reconcile and (from step 5) condition branches.</summary>
     public const int MaxSteps = 200;
@@ -58,7 +60,6 @@ public static class WorkflowLimits
 
     public const int MinInputMaxLength = 1;
     public const int MaxInputMaxLength = 10_000;
-    public const int DefaultInputMaxLength = 1_000;
 
     public const int MinCommitLatencySeconds = 1;
     public const int MaxCommitLatencySeconds = 3_600;
@@ -66,7 +67,6 @@ public static class WorkflowLimits
     public const int MaxContractReferenceChars = 500;
     public const int MinEvidenceAgeSeconds = 30;
     public const int MaxEvidenceAgeSeconds = 3_600;
-    public const int DefaultEvidenceAgeSeconds = 300;
 
     // ----- Action-level limits (enforced by the action catalog from step 5; defined here as the single source) -----
 
@@ -80,13 +80,11 @@ public static class WorkflowLimits
     public const int MaxDelayMilliseconds = 30_000;
     public const int MinExtractMaxLength = 1;
     public const int MaxExtractMaxLength = 10_000;
-    public const int DefaultExtractMaxLength = 1_000;
     public const int MaxResultFields = 50;
     public const int MaxResultFieldChars = 2_000;
     public const int MaxResultTotalBytes = 32 * 1_024;
     public const int MaxUploadExtensions = 20;
     public const int MinReconcileMaxRows = 1;
     public const int MaxReconcileMaxRows = 50;
-    public const int DefaultReconcileMaxRows = 20;
     public const int MaxAcceptStatuses = 10;
 }

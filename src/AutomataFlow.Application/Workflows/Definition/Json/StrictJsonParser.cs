@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using System.Globalization;
 using System.Text.Json;
 using AutomataFlow.Application.Validation;
 
@@ -11,6 +10,10 @@ namespace AutomataFlow.Application.Workflows.Definition.Json;
 /// content, nesting deeper than <see cref="WorkflowLimits.MaxJsonDepth"/>, duplicate property names (after unescaping),
 /// non-integer numbers (fractions, exponents, <c>-0</c>), integers outside 64-bit range, strings that are not valid
 /// UTF-16, and over-long strings or property names.
+/// <para>
+/// Work is linear in the input size: the current JSON path is kept as a stack of segments and is turned into a string
+/// only when an error is reported (ADR-061), so no per-value allocation grows with the nesting depth.
+/// </para>
 /// </summary>
 public static class StrictJsonParser
 {
@@ -18,12 +21,12 @@ public static class StrictJsonParser
     {
         if (utf8.Length > WorkflowLimits.MaxDefinitionBytes)
         {
-            return Fail("$", "json-too-large", $"The definition is {utf8.Length} bytes; the maximum is {WorkflowLimits.MaxDefinitionBytes}.");
+            return Fail(DiagnosticPath.Root, "json-too-large", $"The definition is {utf8.Length} bytes; the maximum is {WorkflowLimits.MaxDefinitionBytes}.");
         }
 
         if (utf8.Length >= 3 && utf8[0] == 0xEF && utf8[1] == 0xBB && utf8[2] == 0xBF)
         {
-            return Fail("$", "json-bom", "The definition must be UTF-8 without a byte-order mark.");
+            return Fail(DiagnosticPath.Root, "json-bom", "The definition must be UTF-8 without a byte-order mark.");
         }
 
         var reader = new Utf8JsonReader(utf8, new JsonReaderOptions
@@ -33,14 +36,15 @@ public static class StrictJsonParser
             MaxDepth = WorkflowLimits.MaxJsonDepth + 1, // our own depth check below fires first, with a precise path
         });
 
+        var path = new PathStack();
         try
         {
             if (!reader.Read())
             {
-                return Fail("$", "json-malformed", "The definition is empty.");
+                return Fail(DiagnosticPath.Root, "json-malformed", "The definition is empty.");
             }
 
-            var root = ReadValue(ref reader, "$", depth: 0, out var error);
+            var root = ReadValue(ref reader, path, depth: 0, out var error);
             if (error is not null)
             {
                 return new JsonParseResult(null, error);
@@ -48,7 +52,7 @@ public static class StrictJsonParser
 
             if (reader.Read())
             {
-                return Fail("$", "json-malformed", "Unexpected content after the root value.");
+                return Fail(DiagnosticPath.Root, "json-malformed", "Unexpected content after the root value.");
             }
 
             return new JsonParseResult(root, null);
@@ -56,11 +60,11 @@ public static class StrictJsonParser
         catch (JsonException ex)
         {
             var where = ex.LineNumber is { } line ? $" (line {line + 1}, byte {ex.BytePositionInLine + 1})" : string.Empty;
-            return Fail("$", "json-malformed", "The definition is not valid JSON" + where + ".");
+            return Fail(DiagnosticPath.Root, "json-malformed", "The definition is not valid JSON" + where + ".");
         }
     }
 
-    private static JNode? ReadValue(ref Utf8JsonReader reader, string path, int depth, out ValidationError? error)
+    private static JNode? ReadValue(ref Utf8JsonReader reader, PathStack path, int depth, out ValidationError? error)
     {
         error = null;
         switch (reader.TokenType)
@@ -80,16 +84,16 @@ public static class StrictJsonParser
             case JsonTokenType.Null:
                 return JNull.Instance;
             default:
-                error = new ValidationError(path, "json-malformed", "Unexpected JSON token.");
+                error = new ValidationError(path.Format(), "json-malformed", "Unexpected JSON token.");
                 return null;
         }
     }
 
-    private static JObject? ReadObject(ref Utf8JsonReader reader, string path, int depth, out ValidationError? error)
+    private static JObject? ReadObject(ref Utf8JsonReader reader, PathStack path, int depth, out ValidationError? error)
     {
         if (depth > WorkflowLimits.MaxJsonDepth)
         {
-            error = new ValidationError(path, "json-too-deep", $"Nesting is deeper than {WorkflowLimits.MaxJsonDepth} levels.");
+            error = new ValidationError(path.Format(), "json-too-deep", $"Nesting is deeper than {WorkflowLimits.MaxJsonDepth} levels.");
             return null;
         }
 
@@ -108,10 +112,12 @@ public static class StrictJsonParser
                 return null;
             }
 
-            var propertyPath = path + "." + name;
             if (properties.ContainsKey(name!))
             {
-                error = new ValidationError(propertyPath, "json-duplicate-property", $"Property '{name}' appears more than once.");
+                error = new ValidationError(
+                    DiagnosticPath.Property(path.Format(), name!),
+                    "json-duplicate-property",
+                    $"Property '{DiagnosticPath.Escape(name!)}' appears more than once.");
                 return null;
             }
 
@@ -120,7 +126,9 @@ public static class StrictJsonParser
                 break;
             }
 
-            var value = ReadValue(ref reader, propertyPath, depth, out error);
+            path.PushProperty(name!);
+            var value = ReadValue(ref reader, path, depth, out error);
+            path.Pop();
             if (error is not null)
             {
                 return null;
@@ -129,15 +137,15 @@ public static class StrictJsonParser
             properties[name!] = value!;
         }
 
-        error = new ValidationError(path, "json-malformed", "Unterminated object.");
+        error = new ValidationError(path.Format(), "json-malformed", "Unterminated object.");
         return null;
     }
 
-    private static JArray? ReadArray(ref Utf8JsonReader reader, string path, int depth, out ValidationError? error)
+    private static JArray? ReadArray(ref Utf8JsonReader reader, PathStack path, int depth, out ValidationError? error)
     {
         if (depth > WorkflowLimits.MaxJsonDepth)
         {
-            error = new ValidationError(path, "json-too-deep", $"Nesting is deeper than {WorkflowLimits.MaxJsonDepth} levels.");
+            error = new ValidationError(path.Format(), "json-too-deep", $"Nesting is deeper than {WorkflowLimits.MaxJsonDepth} levels.");
             return null;
         }
 
@@ -150,7 +158,9 @@ public static class StrictJsonParser
                 return new JArray(items.ToImmutable());
             }
 
-            var value = ReadValue(ref reader, path + "[" + items.Count.ToString(CultureInfo.InvariantCulture) + "]", depth, out error);
+            path.PushIndex(items.Count);
+            var value = ReadValue(ref reader, path, depth, out error);
+            path.Pop();
             if (error is not null)
             {
                 return null;
@@ -159,11 +169,11 @@ public static class StrictJsonParser
             items.Add(value!);
         }
 
-        error = new ValidationError(path, "json-malformed", "Unterminated array.");
+        error = new ValidationError(path.Format(), "json-malformed", "Unterminated array.");
         return null;
     }
 
-    private static bool ReadString(ref Utf8JsonReader reader, string path, int maxChars, out string? value, out ValidationError? error)
+    private static bool ReadString(ref Utf8JsonReader reader, PathStack path, int maxChars, out string? value, out ValidationError? error)
     {
         value = null;
         try
@@ -172,19 +182,19 @@ public static class StrictJsonParser
         }
         catch (InvalidOperationException)
         {
-            error = new ValidationError(path, "json-invalid-string", "A string is not valid UTF-16 (lone surrogate).");
+            error = new ValidationError(path.Format(), "json-invalid-string", "A string is not valid UTF-8 or UTF-16.");
             return false;
         }
 
         if (value is null || !IsValidUtf16(value))
         {
-            error = new ValidationError(path, "json-invalid-string", "A string is not valid UTF-16 (lone surrogate).");
+            error = new ValidationError(path.Format(), "json-invalid-string", "A string is not valid UTF-8 or UTF-16.");
             return false;
         }
 
         if (value.Length > maxChars)
         {
-            error = new ValidationError(path, "json-string-too-long", $"A string is longer than {maxChars} characters.");
+            error = new ValidationError(path.Format(), "json-string-too-long", $"A string is longer than {maxChars} characters.");
             return false;
         }
 
@@ -192,25 +202,25 @@ public static class StrictJsonParser
         return true;
     }
 
-    private static JInteger? ReadInteger(ref Utf8JsonReader reader, string path, out ValidationError? error)
+    private static JInteger? ReadInteger(ref Utf8JsonReader reader, PathStack path, out ValidationError? error)
     {
         // The input is always a single contiguous span, so the token is never a multi-segment sequence.
-        var raw = reader.ValueSpan.ToArray();
-        if (Array.IndexOf(raw, (byte)'.') >= 0 || Array.IndexOf(raw, (byte)'e') >= 0 || Array.IndexOf(raw, (byte)'E') >= 0)
+        var raw = reader.ValueSpan;
+        if (raw.IndexOfAny((byte)'.', (byte)'e', (byte)'E') >= 0)
         {
-            error = new ValidationError(path, "json-non-integer-number", "Only integers in plain decimal notation are allowed.");
+            error = new ValidationError(path.Format(), "json-non-integer-number", "Only integers in plain decimal notation are allowed.");
             return null;
         }
 
-        if (raw is [(byte)'-', (byte)'0'])
+        if (raw.SequenceEqual("-0"u8))
         {
-            error = new ValidationError(path, "json-non-integer-number", "-0 is not allowed.");
+            error = new ValidationError(path.Format(), "json-non-integer-number", "-0 is not allowed.");
             return null;
         }
 
         if (!reader.TryGetInt64(out var number))
         {
-            error = new ValidationError(path, "json-integer-out-of-range", "The integer is outside the 64-bit range.");
+            error = new ValidationError(path.Format(), "json-integer-out-of-range", "The integer is outside the 64-bit range.");
             return null;
         }
 
@@ -218,7 +228,7 @@ public static class StrictJsonParser
         return new JInteger(number);
     }
 
-    private static bool IsValidUtf16(string value)
+    internal static bool IsValidUtf16(string value)
     {
         for (var i = 0; i < value.Length; i++)
         {
@@ -242,6 +252,29 @@ public static class StrictJsonParser
     }
 
     private static JsonParseResult Fail(string path, string code, string message) => new(null, new ValidationError(path, code, message));
+
+    /// <summary>The current location as a stack of segments; formatted only when an error is reported.</summary>
+    private sealed class PathStack
+    {
+        private readonly List<(string? Name, int Index)> _segments = [];
+
+        public void PushProperty(string name) => _segments.Add((name, -1));
+
+        public void PushIndex(int index) => _segments.Add((null, index));
+
+        public void Pop() => _segments.RemoveAt(_segments.Count - 1);
+
+        public string Format()
+        {
+            var path = DiagnosticPath.Root;
+            foreach (var (name, index) in _segments)
+            {
+                path = name is null ? DiagnosticPath.Index(path, index) : DiagnosticPath.Property(path, name);
+            }
+
+            return path;
+        }
+    }
 }
 
 /// <summary>Either a parsed root (<see cref="Error"/> is null) or the first JSON-level error.</summary>

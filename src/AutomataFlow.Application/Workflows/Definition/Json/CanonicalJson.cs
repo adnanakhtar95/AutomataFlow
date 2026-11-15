@@ -1,7 +1,7 @@
-using System.Buffers;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using AutomataFlow.Domain.Workflows;
 
 namespace AutomataFlow.Application.Workflows.Definition.Json;
 
@@ -14,9 +14,7 @@ namespace AutomataFlow.Application.Workflows.Definition.Json;
 /// </summary>
 public static class CanonicalJson
 {
-    public const string HashPrefix = "sha256:";
-
-    private static readonly SearchValues<char> LowerHexDigits = SearchValues.Create("0123456789abcdef");
+    public const string HashPrefix = DefinitionHashFormat.Prefix;
 
     public static byte[] Serialize(JNode node)
     {
@@ -29,10 +27,8 @@ public static class CanonicalJson
     /// <summary><c>sha256:</c> + 64 lowercase hex digits of the SHA-256 of <paramref name="canonicalUtf8"/>.</summary>
     public static string ComputeHash(ReadOnlySpan<byte> canonicalUtf8) => HashPrefix + Convert.ToHexStringLower(SHA256.HashData(canonicalUtf8));
 
-    /// <summary>True for <c>sha256:</c> followed by exactly 64 lowercase hex digits.</summary>
-    public static bool IsWellFormedHash(string? hash) =>
-        hash is { Length: 71 } && hash.StartsWith(HashPrefix, StringComparison.Ordinal)
-        && hash.AsSpan(HashPrefix.Length).IndexOfAnyExcept(LowerHexDigits) < 0;
+    /// <summary>True for <c>sha256:</c> followed by exactly 64 lowercase hex digits (the Domain's single definition).</summary>
+    public static bool IsWellFormedHash(string? hash) => DefinitionHashFormat.IsWellFormed(hash);
 
     private static void Write(JNode node, StringBuilder output)
     {

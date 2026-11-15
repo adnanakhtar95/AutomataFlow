@@ -22,7 +22,7 @@ public sealed class WorkflowDefinition
 
     public string? Description { get; internal init; }
 
-    /// <summary>Whole-attempt timeout; <see cref="WorkflowLimits.DefaultTimeoutSeconds"/> when omitted.</summary>
+    /// <summary>Whole-attempt timeout; <see cref="SchemaV1Defaults.TimeoutSeconds"/> when omitted.</summary>
     public int TimeoutSeconds { get; internal init; }
 
     /// <summary>Supplied by the job configuration, never by a record (§16 D7).</summary>
@@ -98,7 +98,7 @@ public sealed class WorkflowInput
     /// <summary>False when omitted.</summary>
     public bool Required { get; internal init; }
 
-    /// <summary><see cref="WorkflowLimits.DefaultInputMaxLength"/> when omitted.</summary>
+    /// <summary><see cref="SchemaV1Defaults.InputMaxLength"/> when omitted.</summary>
     public int MaxLength { get; internal init; }
 
     /// <summary>False when omitted.</summary>
@@ -142,7 +142,7 @@ public sealed class ReconciliationAuthority
 
     public string ContractReference { get; internal init; } = string.Empty;
 
-    /// <summary><see cref="WorkflowLimits.DefaultEvidenceAgeSeconds"/> when omitted.</summary>
+    /// <summary><see cref="SchemaV1Defaults.MaxEvidenceAgeSeconds"/> when omitted.</summary>
     public int MaxEvidenceAgeSeconds { get; internal init; }
 }
 

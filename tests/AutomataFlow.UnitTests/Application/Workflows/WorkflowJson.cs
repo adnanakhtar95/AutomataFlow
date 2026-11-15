@@ -61,11 +61,11 @@ internal static class WorkflowJson
 
     public static JsonObject FirstStep(JsonObject root) => root["steps"]!.AsArray()[0]!.AsObject();
 
-    public static ImmutableArray<ValidationError> Errors(string json) => ValidatedWorkflow.Create(json).Errors;
+    public static ImmutableArray<ValidationError> Errors(string json) => ValidatedWorkflow.CreateForPublication(json).Errors;
 
     public static ValidatedWorkflow Valid(string json)
     {
-        var result = ValidatedWorkflow.Create(json);
+        var result = ValidatedWorkflow.CreateForPublication(json);
         Assert.True(result.IsValid, "Expected a valid definition, got: " + string.Join("; ", result.Errors.Select(e => $"{e.Path} {e.Code} {e.Message}")));
         return result.Workflow!;
     }
@@ -73,7 +73,7 @@ internal static class WorkflowJson
     /// <summary>Asserts the definition is refused, no workflow is produced, and the given error is among the errors.</summary>
     public static void AssertRejected(string json, string path, string code)
     {
-        var result = ValidatedWorkflow.Create(json);
+        var result = ValidatedWorkflow.CreateForPublication(json);
         Assert.False(result.IsValid);
         Assert.Null(result.Workflow);
         Assert.True(

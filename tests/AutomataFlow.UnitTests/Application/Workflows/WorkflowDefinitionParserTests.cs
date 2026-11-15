@@ -19,7 +19,7 @@ public class WorkflowDefinitionParserTests
         Assert.Equal(1, definition.SchemaVersion);
         Assert.Equal("minimal-flow", definition.Name);
         Assert.Null(definition.Description);
-        Assert.Equal(WorkflowLimits.DefaultTimeoutSeconds, definition.TimeoutSeconds);
+        Assert.Equal(SchemaV1Defaults.TimeoutSeconds, definition.TimeoutSeconds);
         Assert.Equal("https://crm.example.test", Assert.Single(definition.AllowedHosts));
         Assert.Empty(definition.Parameters);
         Assert.Empty(definition.Inputs);
@@ -64,7 +64,7 @@ public class WorkflowDefinitionParserTests
         Assert.False(email.Sensitive);
         var company = definition.Inputs[1];
         Assert.False(company.Required);
-        Assert.Equal(WorkflowLimits.DefaultInputMaxLength, company.MaxLength);
+        Assert.Equal(SchemaV1Defaults.InputMaxLength, company.MaxLength);
         Assert.True(definition.Inputs[2].Sensitive);
 
         Assert.Equal("crmPassword", Assert.Single(definition.Secrets));
@@ -79,7 +79,7 @@ public class WorkflowDefinitionParserTests
         Assert.Equal(MatchKeyKind.OperationId, reconciliation.MatchKey);
         Assert.Equal(30, reconciliation.Authority!.MaxCommitLatencySeconds);
         Assert.Equal("Fictional CRM runbook 4.2: synchronous commit", reconciliation.Authority.ContractReference);
-        Assert.Equal(WorkflowLimits.DefaultEvidenceAgeSeconds, reconciliation.Authority.MaxEvidenceAgeSeconds);
+        Assert.Equal(SchemaV1Defaults.MaxEvidenceAgeSeconds, reconciliation.Authority.MaxEvidenceAgeSeconds);
 
         Assert.Equal("login", Assert.Single(definition.Setup).Id);
         Assert.Equal(ActionType.Navigate, definition.Setup[0].Type);

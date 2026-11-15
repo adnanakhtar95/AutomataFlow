@@ -1,3 +1,5 @@
+using System.Text;
+using System.Text.Json;
 using AutomataFlow.Domain.Common;
 
 namespace AutomataFlow.Domain.Workflows;
@@ -6,17 +8,21 @@ namespace AutomataFlow.Domain.Workflows;
 /// One version of a workflow's content (docs/PHASE4_PLAN.md §11, §16 D5). Lifecycle rules only; persistence is Phase 5.
 /// <list type="bullet">
 /// <item>Lifecycle <see cref="WorkflowVersionStatus.Draft"/> → <see cref="WorkflowVersionStatus.Published"/> →
-/// <see cref="WorkflowVersionStatus.Archived"/>, with no transition back.</item>
+/// <see cref="WorkflowVersionStatus.Archived"/>, with no transition back and timestamps that never go backwards.</item>
 /// <item>The definition, schema version and hash can change only while the version is a draft; a published or archived
 /// version is read-only, and edits create a new version.</item>
+/// <item>The declared <see cref="SchemaVersion"/> must equal the definition's top-level <c>schemaVersion</c>.</item>
 /// </list>
-/// The entity checks the hash <em>format</em>. That the hash belongs to the definition is established by the
-/// Application layer (<c>ValidatedWorkflow.Create</c>) before a definition is set, and re-verified on every load.
+/// <para>
+/// A well-formed hash is <b>not</b> proof that the hash belongs to the definition (ADR-061). The only trusted way to use
+/// a stored version is <c>ValidatedWorkflow.Load(DefinitionJson, DefinitionHash)</c> in Application, which re-parses,
+/// re-validates and recomputes the hash and refuses a mismatch (<c>WorkflowTampered</c>).
+/// </para>
 /// </summary>
 public sealed class WorkflowVersion : IOrganizationOwned
 {
-    private const string HashPrefix = "sha256:";
-    private const int HashLength = 71;
+    /// <summary>Equal to the parser's definition size limit (one UTF-16 char is at least one UTF-8 byte).</summary>
+    public const int MaxDefinitionChars = 262_144;
 
     private WorkflowVersion()
     {
@@ -99,6 +105,11 @@ public sealed class WorkflowVersion : IOrganizationOwned
             throw new InvalidOperationException($"Only a draft can be published; this version is {Status}.");
         }
 
+        if (publishedAt < CreatedAt)
+        {
+            throw new ArgumentOutOfRangeException(nameof(publishedAt), "A version cannot be published before it was created.");
+        }
+
         Status = WorkflowVersionStatus.Published;
         PublishedAt = publishedAt;
     }
@@ -110,39 +121,81 @@ public sealed class WorkflowVersion : IOrganizationOwned
             throw new InvalidOperationException($"Only a published version can be archived; this version is {Status}.");
         }
 
+        if (archivedAt < PublishedAt!.Value)
+        {
+            throw new ArgumentOutOfRangeException(nameof(archivedAt), "A version cannot be archived before it was published.");
+        }
+
         Status = WorkflowVersionStatus.Archived;
         ArchivedAt = archivedAt;
     }
 
-    public static bool IsWellFormedHash(string? hash)
-    {
-        if (hash is not { Length: HashLength } || !hash.StartsWith(HashPrefix, StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        foreach (var c in hash.AsSpan(HashPrefix.Length))
-        {
-            if (!(char.IsAsciiDigit(c) || c is >= 'a' and <= 'f'))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
+    /// <summary>Same rule as <see cref="DefinitionHashFormat.IsWellFormed"/>.</summary>
+    public static bool IsWellFormedHash(string? hash) => DefinitionHashFormat.IsWellFormed(hash);
 
     private void SetContent(int schemaVersion, string definitionJson, string definitionHash)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(schemaVersion, 1);
         ArgumentException.ThrowIfNullOrWhiteSpace(definitionJson);
-        if (!IsWellFormedHash(definitionHash))
+        if (definitionJson.Length > MaxDefinitionChars)
+        {
+            throw new ArgumentException($"A definition cannot exceed {MaxDefinitionChars} characters.", nameof(definitionJson));
+        }
+
+        if (!DefinitionHashFormat.IsWellFormed(definitionHash))
         {
             throw new ArgumentException("The definition hash must be 'sha256:' followed by 64 lowercase hex digits.", nameof(definitionHash));
+        }
+
+        if (ReadDeclaredSchemaVersion(definitionJson) != schemaVersion)
+        {
+            throw new ArgumentException("The schema version must equal the definition's top-level 'schemaVersion'.", nameof(schemaVersion));
         }
 
         SchemaVersion = schemaVersion;
         DefinitionJson = definitionJson;
         DefinitionHash = definitionHash;
+    }
+
+    /// <summary>
+    /// The definition's single top-level integer <c>schemaVersion</c>, or null when it is missing, duplicated, not an
+    /// integer, or the text is not JSON. A consistency check only; full validation is Application's job.
+    /// </summary>
+    private static long? ReadDeclaredSchemaVersion(string definitionJson)
+    {
+        var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(definitionJson), new JsonReaderOptions { MaxDepth = 64 });
+        long? found = null;
+        try
+        {
+            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+            {
+                return null;
+            }
+
+            while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+            {
+                var isSchemaVersion = reader.ValueTextEquals("schemaVersion"u8);
+                reader.Read();
+                if (isSchemaVersion)
+                {
+                    if (found is not null || reader.TokenType != JsonTokenType.Number || !reader.TryGetInt64(out var value))
+                    {
+                        return null;
+                    }
+
+                    found = value;
+                }
+                else
+                {
+                    reader.Skip();
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        return found;
     }
 }

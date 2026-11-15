@@ -43,23 +43,26 @@ public static class WorkflowDefinitionParser
 /// <summary>Either a bound definition (no errors) or every binding error found.</summary>
 public sealed class DefinitionBindResult
 {
-    private DefinitionBindResult(WorkflowDefinition? definition, ImmutableArray<ValidationError> errors)
+    private DefinitionBindResult(WorkflowDefinition? definition, ImmutableArray<ValidationError> errors, ImmutableArray<ValidationError> warnings)
     {
         Definition = definition;
         Errors = errors;
+        Warnings = warnings;
     }
 
     public WorkflowDefinition? Definition { get; }
 
     public ImmutableArray<ValidationError> Errors { get; }
 
+    public ImmutableArray<ValidationError> Warnings { get; }
+
     public bool IsValid => Errors.IsEmpty && Definition is not null;
 
-    internal static DefinitionBindResult Success(WorkflowDefinition definition) => new(definition, []);
+    internal static DefinitionBindResult Success(WorkflowDefinition definition, ImmutableArray<ValidationError> warnings) => new(definition, [], warnings);
 
-    internal static DefinitionBindResult Failure(ValidationError error) => new(null, [error]);
+    internal static DefinitionBindResult Failure(ValidationError error) => new(null, [error], []);
 
-    internal static DefinitionBindResult Failure(IEnumerable<ValidationError> errors) => new(null, [.. errors]);
+    internal static DefinitionBindResult Failure(IEnumerable<ValidationError> errors) => new(null, [.. errors], []);
 }
 
 /// <summary>Stable error codes of definition parsing and validation.</summary>
@@ -85,6 +88,7 @@ public static class WorkflowErrorCodes
     public const string ExceedsWorkflowTimeout = "exceeds-workflow-timeout";
     public const string HashMalformed = "hash-malformed";
     public const string WorkflowTampered = "WorkflowTampered";
+    public const string TooManyErrors = "too-many-errors";
 }
 
 /// <summary>The schemaVersion 1 binder. Collects every error (with its JSON path) instead of stopping at the first.</summary>
@@ -100,7 +104,7 @@ internal sealed class SchemaV1Binder
 
     private static readonly string[] SelectorKeys = ["testId", "css", "role", "text", "label", "placeholder", "xpath"];
 
-    private readonly ValidationResult _errors = new();
+    private readonly DiagnosticBag _errors = new();
     private readonly Dictionary<string, string> _stepIds = new(StringComparer.Ordinal);
 
     public DefinitionBindResult Bind(JObject root)
@@ -113,7 +117,7 @@ internal sealed class SchemaV1Binder
         var description = ReadText(root, path, "description", WorkflowLimits.MaxDescriptionChars);
         var timeoutSeconds = ReadInt(root, path, "timeoutSeconds", required: false, WorkflowLimits.MinTimeoutSeconds, WorkflowLimits.MaxTimeoutSeconds);
         var timeoutValid = !root.TryGet("timeoutSeconds", out _) || timeoutSeconds is not null;
-        var effectiveTimeoutSeconds = timeoutSeconds ?? WorkflowLimits.DefaultTimeoutSeconds;
+        var effectiveTimeoutSeconds = timeoutSeconds ?? SchemaV1Defaults.TimeoutSeconds;
 
         var parameters = ReadParameters(root, path);
         var allowedHosts = ReadAllowedHosts(root, path);
@@ -157,7 +161,7 @@ internal sealed class SchemaV1Binder
             HasReconcileSection = hasReconcile,
             Reconcile = reconcile,
             Steps = steps,
-        });
+        }, _errors.Warnings);
     }
 
     // ----- Declarations -----
@@ -236,9 +240,9 @@ internal sealed class SchemaV1Binder
             {
                 Name = name,
                 Type = type.Value,
-                Required = isRequired ?? false,
-                MaxLength = maxLength ?? WorkflowLimits.DefaultInputMaxLength,
-                Sensitive = sensitive ?? false,
+                Required = isRequired ?? SchemaV1Defaults.InputRequired,
+                MaxLength = maxLength ?? SchemaV1Defaults.InputMaxLength,
+                Sensitive = sensitive ?? SchemaV1Defaults.InputSensitive,
             };
         });
     }
@@ -363,7 +367,7 @@ internal sealed class SchemaV1Binder
         {
             MaxCommitLatencySeconds = latency.Value,
             ContractReference = reference,
-            MaxEvidenceAgeSeconds = evidenceAge ?? WorkflowLimits.DefaultEvidenceAgeSeconds,
+            MaxEvidenceAgeSeconds = evidenceAge ?? SchemaV1Defaults.MaxEvidenceAgeSeconds,
         };
     }
 
@@ -418,7 +422,7 @@ internal sealed class SchemaV1Binder
         else if (AsObject(configNode, path + ".config", out var configObject))
         {
             config = configObject;
-            RejectForbiddenKeys(configObject, path + ".config");
+            RejectForbiddenKeys(configObject, path + ".config", dataMapProperty: type is ActionType.CaptureResult or ActionType.ReconcileMatch ? "fields" : null);
         }
 
         var timeoutMs = ReadInt(obj, path, "timeoutMs", required: false, WorkflowLimits.MinStepTimeoutMs, WorkflowLimits.MaxStepTimeoutMs);
@@ -444,7 +448,7 @@ internal sealed class SchemaV1Binder
             Type = type.Value,
             Config = config,
             TimeoutMs = timeoutMs,
-            OnError = onError ?? StepErrorMode.Fail,
+            OnError = onError ?? SchemaV1Defaults.OnError,
             SideEffect = sideEffect,
             Idempotency = idempotency,
             Description = description,
@@ -470,31 +474,72 @@ internal sealed class SchemaV1Binder
         return key is null || guarantee is null ? null : new IdempotencyAttestation { Key = key, Guarantee = guarantee.Value };
     }
 
-    private void RejectForbiddenKeys(JNode node, string path)
+    /// <summary>
+    /// Rejects loop and regex constructs inside a raw <c>config</c> (§16 D6). The keys of an author-named data map
+    /// (<paramref name="dataMapProperty"/>, e.g. result <c>fields</c>) are data, not constructs, so they are not checked;
+    /// their values are. Matching is case-insensitive. The path is formatted only for an error (ADR-061).
+    /// </summary>
+    private void RejectForbiddenKeys(JObject config, string configPath, string? dataMapProperty)
     {
-        switch (node)
+        var segments = new List<(string? Name, int Index)>();
+        Scan(config, isDataMap: false);
+
+        void Scan(JNode node, bool isDataMap)
         {
-            case JObject obj:
-                foreach (var property in obj.Properties)
-                {
-                    var propertyPath = path + "." + property.Key;
-                    if (WorkflowJsonNames.ForbiddenKeys.Contains(property.Key, StringComparer.Ordinal))
+            switch (node)
+            {
+                case JObject obj:
+                    foreach (var property in obj.Properties)
                     {
-                        _errors.Add(propertyPath, WorkflowErrorCodes.ForbiddenConstruct, $"'{property.Key}' is not supported: schemaVersion 1 has no loops and no regular expressions.");
+                        segments.Add((property.Key, -1));
+                        if (!isDataMap && IsForbiddenKey(property.Key))
+                        {
+                            _errors.Add(FormatPath(), WorkflowErrorCodes.ForbiddenConstruct,
+                                $"'{DiagnosticPath.Escape(property.Key)}' is not supported: schemaVersion 1 has no loops and no regular expressions.");
+                        }
+
+                        var childIsDataMap = segments.Count == 1 && dataMapProperty is not null
+                            && string.Equals(property.Key, dataMapProperty, StringComparison.Ordinal);
+                        Scan(property.Value, childIsDataMap);
+                        segments.RemoveAt(segments.Count - 1);
                     }
 
-                    RejectForbiddenKeys(property.Value, propertyPath);
-                }
+                    break;
+                case JArray array:
+                    for (var i = 0; i < array.Items.Length; i++)
+                    {
+                        segments.Add((null, i));
+                        Scan(array.Items[i], isDataMap: false);
+                        segments.RemoveAt(segments.Count - 1);
+                    }
 
-                break;
-            case JArray array:
-                for (var i = 0; i < array.Items.Length; i++)
-                {
-                    RejectForbiddenKeys(array.Items[i], path + "[" + i.ToString(CultureInfo.InvariantCulture) + "]");
-                }
-
-                break;
+                    break;
+            }
         }
+
+        string FormatPath()
+        {
+            var path = configPath;
+            foreach (var (name, index) in segments)
+            {
+                path = name is null ? DiagnosticPath.Index(path, index) : DiagnosticPath.Property(path, name);
+            }
+
+            return path;
+        }
+    }
+
+    private static bool IsForbiddenKey(string key)
+    {
+        foreach (var forbidden in WorkflowJsonNames.ForbiddenKeys)
+        {
+            if (string.Equals(forbidden, key, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // ----- Selectors (same rules as the Phase 3 browser selector, applied at authoring time) -----
@@ -616,13 +661,14 @@ internal sealed class SchemaV1Binder
                 continue;
             }
 
-            if (WorkflowJsonNames.ForbiddenKeys.Contains(property.Key, StringComparer.Ordinal))
+            var propertyPath = DiagnosticPath.Property(path, property.Key);
+            if (IsForbiddenKey(property.Key))
             {
-                _errors.Add(path + "." + property.Key, WorkflowErrorCodes.ForbiddenConstruct, $"'{property.Key}' is not supported: schemaVersion 1 has no loops and no regular expressions.");
+                _errors.Add(propertyPath, WorkflowErrorCodes.ForbiddenConstruct, $"'{DiagnosticPath.Escape(property.Key)}' is not supported: schemaVersion 1 has no loops and no regular expressions.");
             }
             else
             {
-                _errors.Add(path + "." + property.Key, WorkflowErrorCodes.UnknownProperty, $"Unknown property '{property.Key}'.");
+                _errors.Add(propertyPath, WorkflowErrorCodes.UnknownProperty, $"Unknown property '{DiagnosticPath.Escape(property.Key)}'.");
             }
         }
     }
