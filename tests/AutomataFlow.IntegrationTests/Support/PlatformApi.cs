@@ -61,6 +61,36 @@ public sealed class PlatformApi : IAsyncLifetime
         return (email, (await response.Content.ReadFromJsonAsync<TokenDto>())!);
     }
 
+    /// <summary>Adds a new user with <paramref name="role"/> to <paramref name="organizationId"/> and signs them in there.</summary>
+    public async Task<TokenDto> AddMemberAsync(Guid organizationId, AutomataFlow.Domain.Organizations.OrganizationRole role)
+    {
+        var (email, own) = await RegisterAsync("member");
+        await using (var db = Database.Context(organizationId))
+        {
+            var userId = new Microsoft.IdentityModel.JsonWebTokens.JsonWebTokenHandler().ReadJsonWebToken(own.AccessToken).Subject;
+            db.OrganizationMembers.Add(AutomataFlow.Domain.Organizations.OrganizationMember.Create(organizationId, Guid.Parse(userId), role, DateTimeOffset.UtcNow));
+            await db.SaveChangesAsync();
+        }
+
+        var response = await Client().PostAsJsonAsync("/api/v1/auth/login", new { email, password = Password, organizationId });
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        return (await response.Content.ReadFromJsonAsync<TokenDto>())!;
+    }
+
+    public static string RepositoryRoot
+    {
+        get
+        {
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "AutomataFlow.slnx")))
+            {
+                dir = dir.Parent;
+            }
+
+            return dir?.FullName ?? throw new InvalidOperationException("Repository root not found.");
+        }
+    }
+
     public async Task GrantPlatformOperatorAsync(Guid userId)
     {
         using var scope = Factory.Services.CreateScope();

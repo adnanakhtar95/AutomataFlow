@@ -1,9 +1,13 @@
 using AutomataFlow.Infrastructure.Identity;
 using AutomataFlow.Infrastructure.Persistence;
+using AutomataFlow.Infrastructure.Security;
+using AutomataFlow.Infrastructure.Workflows;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace AutomataFlow.Infrastructure;
 
@@ -29,6 +33,21 @@ public static class DependencyInjection
         services.AddDbContext<AutomataFlowDbContext>(options =>
             options.UseNpgsql(connectionString));
 
+        // Data Protection keys must be shared by the Api (encrypts) and the Worker (decrypts): a directory on a shared,
+        // access-restricted volume in deployments (DataProtection:KeysDirectory). Without it, keys stay in the user profile.
+        var dataProtection = services.AddDataProtection().SetApplicationName("AutomataFlow");
+        if (configuration["DataProtection:KeysDirectory"] is { Length: > 0 } keys)
+        {
+            dataProtection.PersistKeysToFileSystem(new DirectoryInfo(keys));
+        }
+
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddSingleton<ValueProtection>();
+        services.AddScoped<SecretService>();
+        services.AddScoped<OrganizationSecretProvider>();
+        services.AddScoped<WorkflowService>();
+        services.AddOptions<PlatformOptions>().Bind(configuration.GetSection(PlatformOptions.SectionName));
+
         return services;
     }
 
@@ -53,7 +72,7 @@ public static class DependencyInjection
             .AddEntityFrameworkStores<AutomataFlowDbContext>();
         services.AddOptions<AccountOptions>().Bind(configuration.GetSection(AccountOptions.SectionName))
             .Validate(o => o.RefreshTokenDays is >= 1 and <= 90, "Auth:RefreshTokenDays must be 1-90.").ValidateOnStart();
-        services.AddSingleton(TimeProvider.System);
+        services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<AccountService>();
         return services;
     }

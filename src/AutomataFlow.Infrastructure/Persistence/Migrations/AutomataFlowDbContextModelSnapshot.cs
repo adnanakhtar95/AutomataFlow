@@ -577,6 +577,10 @@ namespace AutomataFlow.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("AcknowledgedAttestations")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.Property<DateTimeOffset?>("ArchivedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -598,6 +602,9 @@ namespace AutomataFlow.Infrastructure.Persistence.Migrations
 
                     b.Property<DateTimeOffset?>("PublishedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("PublishedBy")
+                        .HasColumnType("uuid");
 
                     b.Property<int>("SchemaVersion")
                         .HasColumnType("integer");

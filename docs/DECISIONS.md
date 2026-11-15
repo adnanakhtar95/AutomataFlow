@@ -606,6 +606,21 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
 - **Registration:** self-service registration (a new user plus a new organization with Owner membership) is **off unless `Auth:AllowRegistration` is set**. Auth endpoints are rate-limited per client IP (fixed window, `Auth:PermitsPerMinute`, default 20).
 - **Reviewed `IgnoreQueryFilters` use:** sign-in lists the authenticated user's own memberships across organizations, always filtered by user id. This is the first entry on the source-scan allow-list.
 - **Package:** `Microsoft.AspNetCore.Authentication.JwtBearer` 10.0.15 (MIT).
+## ADR-069 — Workflow publication, hosted-mode attestation restriction and encrypted secrets (Phase 5 step 3)
+**Status:** Accepted (2026-11-15).
+- **Where use cases live:** platform use cases that orchestrate persistence (`WorkflowService`, `SecretService`, `AccountService`) are in Infrastructure, beside EF. Application keeps the pure policy they call (`ValidatedWorkflow`, `PublicationPolicy`, the evaluator, the executor contracts). Dependencies still point inward, and adding a repository interface per aggregate would be an abstraction without a seam (rule 9). Every use case takes the organization from `ICurrentUser` and puts it in every query; a foreign id gives NotFound.
+- **Definitions:**
+  - every draft must validate completely (`CreateForPublication`);
+  - it is stored exactly as received, with its canonical hash;
+  - publication re-loads it with `ValidatedWorkflow.Load(json, hash)`, and a mismatch is refused (`WorkflowTampered`, 409);
+  - published and archived versions are immutable; edits create a new version;
+  - publication denormalizes the declared inputs into `WorkflowInputs`.
+- **Who may publish:** Admin or Owner (`Policies.Admin`); Operators author drafts and Viewers read. **Attestations** are `targetEnforced` idempotency, `authoritative` evidence and `businessKey` matching (docs/WORKFLOWS.md §9, limitation 1):
+  - publishing them always requires an explicit `acknowledgeAttestations`, recorded with the version together with `PublishedBy`;
+  - in `Platform:Mode = Hosted` only an Owner may publish them (`attestation-requires-owner`);
+  - `Platform:Mode` (Development / SelfHosted / Hosted) mirrors the engine's mode, because the Api cannot reference Automation.
+- **Secrets:** stored only as ASP.NET Core Data Protection payloads whose purpose includes the organization id, so a payload copied into another organization cannot be decrypted there. The API is write-only for values (list names, set, delete; Admin+). The Worker decrypts a secret only inside the attempt (`OrganizationSecretProvider`, the engine's `ISecretProvider`). Keys live in `DataProtection:KeysDirectory`, a shared, access-restricted volume read by both the Api and the Worker. **Package:** `Microsoft.AspNetCore.DataProtection` 10.0.15 (MIT).
+- **Proof of application-layer scoping:** the cross-tenant workflow and secret tests run twice: against the normal Api, and against an Api whose DbContext has the query-filter backstop disabled. A sanity test proves that the second host really runs with the filters off.
 ## Resolved from the approval round (2026-11-11)
 1. SDK: selected from inspection, not blindly pinned (ADR-004). 2. PostgreSQL: Docker `postgres:18`, port 5433, volume (ADR-013). 3. Git initialized; commit after each verified phase; no secrets or generated artifacts. 4. Identity + JWT (ADR-010). 5. Hand-written validators (ADR-016). 6. Razor Pages Demo CRM (ADR-011). 7. Folder layout `src/ tests/ web/ deploy/ docs/`, React in `web/automataflow-web`. 8. 16-day target, 16–20 realistic; quality over deadline. 9. Frontend libraries deferred (ADR-019). 10. Playwright Chromium download approved for Phase 3.
 

@@ -36,6 +36,7 @@ internal sealed class WorkflowVersionConfiguration : IEntityTypeConfiguration<Wo
         builder.Property(v => v.DefinitionJson).HasMaxLength(WorkflowVersion.MaxDefinitionChars).IsRequired();
         builder.Property(v => v.DefinitionHash).HasMaxLength(71).IsRequired();
         builder.Property(v => v.Status).HasConversion<string>().HasMaxLength(16).IsRequired();
+        builder.Property(v => v.AcknowledgedAttestations).HasMaxLength(200);
         builder.HasIndex(v => new { v.OrganizationId, v.WorkflowId, v.VersionNumber }).IsUnique();
         builder.HasOne<Workflow>().WithMany().HasForeignKey(v => new { v.OrganizationId, v.WorkflowId })
             .HasPrincipalKey(w => new { w.OrganizationId, w.Id }).OnDelete(DeleteBehavior.Restrict);

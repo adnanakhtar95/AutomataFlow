@@ -53,6 +53,12 @@ public sealed class WorkflowVersion : IOrganizationOwned
 
     public DateTimeOffset? ArchivedAt { get; private set; }
 
+    /// <summary>The user who published the version (audit).</summary>
+    public Guid? PublishedBy { get; private set; }
+
+    /// <summary>Attestations the publisher explicitly acknowledged (comma-separated names), or null when there were none.</summary>
+    public string? AcknowledgedAttestations { get; private set; }
+
     public static WorkflowVersion CreateDraft(
         Guid organizationId,
         Guid workflowId,
@@ -98,7 +104,7 @@ public sealed class WorkflowVersion : IOrganizationOwned
         SetContent(schemaVersion, definitionJson, definitionHash);
     }
 
-    public void Publish(DateTimeOffset publishedAt)
+    public void Publish(DateTimeOffset publishedAt, Guid? publishedBy = null, string? acknowledgedAttestations = null)
     {
         if (Status != WorkflowVersionStatus.Draft)
         {
@@ -112,6 +118,8 @@ public sealed class WorkflowVersion : IOrganizationOwned
 
         Status = WorkflowVersionStatus.Published;
         PublishedAt = publishedAt;
+        PublishedBy = publishedBy;
+        AcknowledgedAttestations = string.IsNullOrWhiteSpace(acknowledgedAttestations) ? null : acknowledgedAttestations;
     }
 
     public void Archive(DateTimeOffset archivedAt)
