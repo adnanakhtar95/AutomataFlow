@@ -28,6 +28,9 @@ public enum CustomerSearchField
     Name,
     Phone,
     Id,
+
+    /// <summary>Exact lookup by operation reference (a GUID, normalized to "D"); 0 or 1 result. Test-fixture extension (ADR-054).</summary>
+    OperationId,
 }
 
 public sealed record PagedResult<T>(IReadOnlyList<T> Items, int Page, int PageSize, int TotalCount)

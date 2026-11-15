@@ -117,6 +117,20 @@ public sealed class InMemoryCustomerStore : ICustomerStore
             return [];
         }
 
+        if (field == CustomerSearchField.OperationId)
+        {
+            // Exact match only: no substring hit, invalid GUIDs give nothing; case and brace variants normalize.
+            if (!Guid.TryParse(text, out var operation))
+            {
+                return [];
+            }
+
+            lock (_gate)
+            {
+                return _byOperation.TryGetValue(operation.ToString("D"), out var match) ? [match] : [];
+            }
+        }
+
         lock (_gate)
         {
             return _customers.Where(c => Matches(c, field, text)).OrderBy(c => c.Id).ToList();

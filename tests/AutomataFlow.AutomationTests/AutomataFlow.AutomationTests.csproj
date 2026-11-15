@@ -3,6 +3,10 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Test-only journal, fault injection, fake supervisor and the shared conformance suite (ADR-058). -->
+    <Compile Include="..\Shared\AttemptJournalConformance\**\*.cs" Link="Shared\AttemptJournalConformance\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+  <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>

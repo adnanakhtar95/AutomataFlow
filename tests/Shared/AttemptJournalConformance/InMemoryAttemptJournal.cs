@@ -153,8 +153,16 @@ public class InMemoryAttemptJournal(TimeProvider clock, TimeSpan? leaseLength = 
         }
     }
 
+    /// <summary>Simulates a killed Worker: its completion never reaches the journal (K1, K2).</summary>
+    public bool SuppressCompletions { get; set; }
+
     public virtual Task<DateTimeOffset> CompleteAsync(AttemptReservation reservation, AttemptCompletion completion, CancellationToken cancellationToken)
     {
+        if (SuppressCompletions)
+        {
+            return Task.FromResult(clock.GetUtcNow());
+        }
+
         lock (_gate)
         {
             var now = clock.GetUtcNow();

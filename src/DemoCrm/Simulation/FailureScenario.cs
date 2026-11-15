@@ -12,6 +12,12 @@ public enum FailureScenarioKind
 
     /// <summary>The submission succeeds, but only after <c>SlowDelayMs</c>.</summary>
     Slow,
+
+    /// <summary>
+    /// The handler waits <c>LateCommitDelayMs</c> IGNORING request abortion, then stores and responds: a server that
+    /// commits after the client gave up (test-fixture extension, ADR-054).
+    /// </summary>
+    LateCommit,
 }
 
 /// <summary>
@@ -43,6 +49,11 @@ public sealed record FailureScenario(FailureScenarioKind Kind, int FailCount = 0
         if (tag == "commit-fail")
         {
             return new FailureScenario(FailureScenarioKind.CommitThenFail);
+        }
+
+        if (tag == "late-commit")
+        {
+            return new FailureScenario(FailureScenarioKind.LateCommit);
         }
 
         if (tag == "slow")

@@ -10,6 +10,7 @@ namespace DemoCrm.Pages.Customers;
 public sealed class RegisterModel(
     ICustomerStore store,
     FailureSimulator simulator,
+    RegistrationCounter counter,
     IOptions<DemoCrmOptions> options,
     TimeProvider time,
     ILogger<RegisterModel> logger) : PageModel
@@ -34,6 +35,7 @@ public sealed class RegisterModel(
 
     public async Task<IActionResult> OnPostAsync(CancellationToken cancellationToken)
     {
+        counter.Increment(); // every POST, before validation (ADR-054)
         ModelState.Clear();
         IReadOnlyList<ValidationFailure> failures = CustomerInputValidator.Validate(Input, out var customer);
         string? operationId = null;
@@ -81,6 +83,12 @@ public sealed class RegisterModel(
         if (scenario.Kind == FailureScenarioKind.Slow)
         {
             await Task.Delay(options.Value.Simulation.SlowDelayMs, cancellationToken);
+        }
+
+        if (scenario.Kind == FailureScenarioKind.LateCommit)
+        {
+            // Deliberately NOT the request token: the server keeps working after the client gave up.
+            await Task.Delay(options.Value.Simulation.LateCommitDelayMs, CancellationToken.None);
         }
 
         var outcome = store.Register(customer, operationId, time.GetUtcNow());

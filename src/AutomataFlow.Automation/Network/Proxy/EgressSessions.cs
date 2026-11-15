@@ -404,6 +404,9 @@ public sealed class EgressSessionRegistry
     /// <summary>Deterministic interleaving hooks for tests; always null in production.</summary>
     internal EgressTestHooks? Hooks { get; set; }
 
+    /// <summary>Test inspection only (internal): the currently registered sessions (F6 reads their credentials).</summary>
+    internal IReadOnlyCollection<EgressSession> SnapshotForTests() => [.. _sessions.Values];
+
     public EgressSession Register(Guid sessionId, EgressPolicy policy)
     {
         ArgumentNullException.ThrowIfNull(policy);

@@ -56,6 +56,9 @@ public sealed partial class DemoCrmProcess : IAsyncDisposable
         start.Environment["ASPNETCORE_ENVIRONMENT"] = "Production";
         start.Environment["DemoCrm__ControlApi__Token"] = ControlToken;
         start.Environment["DemoCrm__Simulation__SlowDelayMs"] = "200";
+        // 9 s keeps the late commit clearly after an "immediate" reconcile (which first signs in) while staying inside the
+        // 10 s contract of variants C/D: DemoCrm's bound is max(SlowDelayMs, LateCommitDelayMs) + 1 s = 10 s (docs/DEMO_CRM.md).
+        start.Environment["DemoCrm__Simulation__LateCommitDelayMs"] = "9000";
 
         _process = Process.Start(start) ?? throw new InvalidOperationException("Could not start DemoCrm.");
         var listening = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -100,6 +103,15 @@ public sealed partial class DemoCrmProcess : IAsyncDisposable
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/demo/reset");
         request.Headers.Add("X-Demo-Control-Token", ControlToken);
         (await _http.SendAsync(request)).EnsureSuccessStatusCode();
+    }
+
+    /// <summary>Every POST to /Customers/Register since the last reset (ADR-054 fixture counter).</summary>
+    public async Task<int> RegistrationSubmissionsAsync()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}/demo/state");
+        request.Headers.Add("X-Demo-Control-Token", ControlToken);
+        var state = await (await _http.SendAsync(request)).Content.ReadFromJsonAsync<JsonElement>();
+        return state.GetProperty("registrationSubmissions").GetInt32();
     }
 
     public async Task<int> CustomerCountAsync()

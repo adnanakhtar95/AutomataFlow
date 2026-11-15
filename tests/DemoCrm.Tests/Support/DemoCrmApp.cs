@@ -65,7 +65,7 @@ internal sealed partial class DemoCrmApp : IDisposable
 
     private readonly WebApplicationFactory<Program> _factory;
 
-    public DemoCrmApp(string controlToken = ControlToken, bool simulationEnabled = true, int slowDelayMs = 25, string environment = "Testing")
+    public DemoCrmApp(string controlToken = ControlToken, bool simulationEnabled = true, int slowDelayMs = 25, string environment = "Testing", int lateCommitDelayMs = 400)
     {
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
@@ -73,6 +73,7 @@ internal sealed partial class DemoCrmApp : IDisposable
             builder.UseSetting("DemoCrm:ControlApi:Token", controlToken);
             builder.UseSetting("DemoCrm:Simulation:Enabled", simulationEnabled ? "true" : "false");
             builder.UseSetting("DemoCrm:Simulation:SlowDelayMs", slowDelayMs.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            builder.UseSetting("DemoCrm:Simulation:LateCommitDelayMs", lateCommitDelayMs.ToString(System.Globalization.CultureInfo.InvariantCulture));
         });
         Client = _factory.CreateClient(new WebApplicationFactoryClientOptions
         {

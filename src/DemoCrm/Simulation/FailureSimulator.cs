@@ -18,3 +18,18 @@ public sealed class FailureSimulator
 
     public void Reset() => _attempts.Clear();
 }
+
+/// <summary>
+/// Counts every POST to /Customers/Register, incremented at the start of the handler before validation, so tests can
+/// detect any resubmission, including rejected ones (test-fixture extension, ADR-054). Exposed as a count only.
+/// </summary>
+public sealed class RegistrationCounter
+{
+    private int _count;
+
+    public int Count => Volatile.Read(ref _count);
+
+    public void Increment() => Interlocked.Increment(ref _count);
+
+    public void Reset() => Interlocked.Exchange(ref _count, 0);
+}

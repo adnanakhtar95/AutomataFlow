@@ -1826,8 +1826,8 @@ It runs against `InMemoryAttemptJournal` in Phase 4, and unchanged against Postg
 13. [x] (Step 7: §9 classification, R8 outcome rules X1–X10, upload checks before the checkpoint.) Errors classified with category and transience; after a side effect only declared permanent business outcomes give `Failed`, everything else gives `Indeterminate`; uploads checked for size, extension, content type and signature before the checkpoint.
 14. [x] (Step 7, J1–J11.) Executor runs one attempt per call with a fresh Phase 3 session that is always disposed; request/result/evidence/journal contracts ready for Phase 5.
 15. [ ] Immutability: deterministic canonicalization with golden values; hash verified at publish, load and execution; `WorkflowVersion` lifecycle; schemaVersion dispatch.
-16. [ ] DemoCrm fixture extensions implemented and tested; no production project depends on DemoCrm.
-17. [ ] DemoCrm sample and variants pass every §12.2 and §13.4 scenario in real Chromium, with exact customer **and** POST-submission counts, and zero unauthorized resubmissions.
+16. [x] (Step 8: operation-id search, POST counter, `+late-commit`; DemoCrm.Tests; `docs/DEMO_CRM.md` incl. the commit-latency contract.) DemoCrm fixture extensions implemented and tested; no production project depends on DemoCrm.
+17. [x] (Step 8: `docs/workflows/democrm-register-customer.json`; §12.2, A1–A4, B1–B6, C1–C4 (C5 is a validator test), D1, D2, K1–K3 and F1–F6 in real Chromium with exact customer and POST counts.) DemoCrm sample and variants pass every §12.2 and §13.4 scenario in real Chromium, with exact customer **and** POST-submission counts, and zero unauthorized resubmissions.
 18. [ ] Test matrix (§13) implemented; 0 warnings; all tests green in the verification container (two consecutive runs).
 19. [ ] Docs:
     - `docs/WORKFLOWS.md` (authoring guide incl. explicit side effects, idempotency attestation, evidence levels and match keys, limitations and the cost of safety);

@@ -20,7 +20,7 @@ public static class DemoControlEndpoints
     {
         var group = endpoints.MapGroup("/demo").AllowAnonymous().DisableAntiforgery();
 
-        group.MapPost("/reset", (HttpContext context, IOptions<DemoCrmOptions> options, ICustomerStore store, FailureSimulator simulator) =>
+        group.MapPost("/reset", (HttpContext context, IOptions<DemoCrmOptions> options, ICustomerStore store, FailureSimulator simulator, RegistrationCounter counter) =>
         {
             if (Authorize(context, options.Value) is { } denied)
             {
@@ -29,17 +29,18 @@ public static class DemoControlEndpoints
 
             store.Reset();
             simulator.Reset();
+            counter.Reset();
             return Results.NoContent();
         });
 
-        group.MapGet("/state", (HttpContext context, IOptions<DemoCrmOptions> options, ICustomerStore store, FailureSimulator simulator) =>
+        group.MapGet("/state", (HttpContext context, IOptions<DemoCrmOptions> options, ICustomerStore store, FailureSimulator simulator, RegistrationCounter counter) =>
         {
             if (Authorize(context, options.Value) is { } denied)
             {
                 return denied;
             }
 
-            return Results.Ok(new DemoStateDto(store.Count, store.SeededCount, simulator.TrackedAddresses));
+            return Results.Ok(new DemoStateDto(store.Count, store.SeededCount, simulator.TrackedAddresses, counter.Count));
         });
 
         return endpoints;
@@ -61,4 +62,4 @@ public static class DemoControlEndpoints
     }
 }
 
-public sealed record DemoStateDto(int CustomerCount, int SeededCount, int SimulatedAddresses);
+public sealed record DemoStateDto(int CustomerCount, int SeededCount, int SimulatedAddresses, int RegistrationSubmissions);

@@ -9,6 +9,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<DemoCrmOptions>(builder.Configuration.GetSection(DemoCrmOptions.SectionName));
 builder.Services.AddSingleton<ICustomerStore, InMemoryCustomerStore>();
 builder.Services.AddSingleton<FailureSimulator>();
+builder.Services.AddSingleton<RegistrationCounter>();
 builder.Services.AddSingleton<DemoUserAuthenticator>();
 builder.Services.AddSingleton(TimeProvider.System);
 

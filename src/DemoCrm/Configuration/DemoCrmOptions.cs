@@ -31,6 +31,9 @@ public sealed class SimulationOptions
 
     /// <summary>Delay applied by the <c>+slow</c> scenario.</summary>
     public int SlowDelayMs { get; set; } = 3000;
+
+    /// <summary>Delay applied by the <c>+late-commit</c> scenario (not cancellable by the client).</summary>
+    public int LateCommitDelayMs { get; set; } = 7000;
 }
 
 public sealed class ControlApiOptions

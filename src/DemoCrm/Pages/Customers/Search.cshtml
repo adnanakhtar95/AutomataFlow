@@ -30,7 +30,7 @@
             <tbody>
             @foreach (var c in Model.Results)
             {
-                <tr data-testid="search-result-row" data-customer-id="@c.DisplayId">
+                <tr data-testid="search-result-row" data-customer-id="@c.DisplayId" data-operation-id="@(c.OperationId ?? string.Empty)">
                     <td><a href="/Customers/Details/@c.Id" data-testid="customer-link">@c.DisplayId</a></td>
                     <td>@c.FullName</td>
                     <td data-testid="customer-email">@c.Email</td>

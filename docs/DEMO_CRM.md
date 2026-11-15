@@ -79,11 +79,26 @@ Triggered by a plus-tag in the email local part (valid emails only; validation r
 |---|---|
 | `name+fail-1@example.test` ... `+fail-5` | first N submissions return 503 **before** anything is stored; the next succeeds |
 | `name+commit-fail@example.test` | first submission is **stored**, then 503 is returned (lost response); later submissions behave normally (replay with the same operation reference, duplicate error without) |
-| `name+slow@example.test` | succeeds after `Simulation:SlowDelayMs` (default 3000 ms) |
+| `name+slow@example.test` | succeeds after `Simulation:SlowDelayMs` (default 3000 ms); honours request abortion |
+| `name+late-commit@example.test` | waits `Simulation:LateCommitDelayMs` (default 7000 ms) **ignoring request abortion**, then stores and responds: a server that commits after the client gave up (Phase 4 fixture extension, ADR-054) |
+
+## Phase 4 test-fixture extensions (ADR-054)
+DemoCrm stays an independent fixture: only `DemoCrm.Tests` and `AutomataFlow.AutomationTests` reference it (ADR-027).
+- **Exact operation-id lookup:** `/Customers/Search?Field=OperationId&Term=<guid>`. The term is parsed as a GUID and normalized to `"D"` (case and brace variants match); the result is the 0 or 1 customer stored with that operation reference. A prefix or an invalid GUID returns no results. Every search row carries `data-operation-id` (empty when the customer has none) and `data-customer-id`. The operation reference is not personal data.
+- **Registration POST counter:** every POST to `/Customers/Register` (created, replayed, validation failure, duplicate, simulated failure, later-aborted request) increments a counter at the start of the handler, before validation. `GET /demo/state` returns it as `registrationSubmissions`; `POST /demo/reset` zeroes it. Tests assert it so that any resubmission is visible even when DemoCrm rejects it as a duplicate.
+
+## Commit-latency contract (the reference of `authority.contractReference` in the Phase 4 variants C and D)
+This is the target-operator statement that justifies `evidence: "authoritative"` for DemoCrm (docs/PHASE4_PLAN.md §10.4, ADR-057):
+1. **Bounded commit latency:** a registration is committed synchronously, under the store lock, inside the request, before the response is sent. No queue, retry or background job can commit later. The worst case is the simulation delay: maximum commit latency = `max(SlowDelayMs, LateCommitDelayMs)` + 1 s for local buffering, loopback transit and query visibility. With the defaults that is 8 s; the browser test harness sets `LateCommitDelayMs` to 9,000 ms, giving 10 s.
+2. **Read-your-writes:** the search reads the same in-memory store; a committed customer is visible immediately.
+3. **No pending or moderated state.**
+4. **Unique keys and superset search:** email and operation reference are unique; the email search is a substring search, so it returns a superset of the exact matches, and the operation-id search is exact.
+
+Variants C and D therefore declare `maxCommitLatencySeconds: 10`. A configuration that raises either delay above 9 s breaks this contract.
 
 ## Resetting the demo data
 - **UI:** `/Admin` -> "Reset demo data" (signed-in, antiforgery-protected POST). Shows a confirmation message.
-- **Machine:** `POST /demo/reset` with header `X-Demo-Control-Token`; `GET /demo/state` returns `{customerCount, seededCount, simulatedAddresses}`. State exposes counts only, never customer data.
+- **Machine:** `POST /demo/reset` with header `X-Demo-Control-Token`; `GET /demo/state` returns `{customerCount, seededCount, simulatedAddresses, registrationSubmissions}`. State exposes counts only, never customer data.
   - **Token source:** the environment variable `DemoCrm__ControlApi__Token` (the standard .NET mapping of `__` to `:`, i.e. configuration key `DemoCrm:ControlApi:Token`). No token is stored in any committed file; every `appsettings*.json` keeps it empty, and a test enforces that.
   - **Disabled by default:** with the variable missing or empty both endpoints return **404**. A missing or wrong header returns **401** (constant-time comparison).
   - **Set it:** PowerShell `$env:DemoCrm__ControlApi__Token = '<random value>'`, or let `scripts/run-demo-crm.ps1` generate one per run and print it. Use a long random value, never a reused password.
