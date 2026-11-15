@@ -51,7 +51,7 @@ public sealed class RecordingConnector : IUpstreamConnector
 
     public void Map(IPEndPoint publicEndpoint, IPEndPoint localEndpoint) => _map[publicEndpoint] = localEndpoint;
 
-    public Task<Stream> ConnectAsync(IPEndPoint endpoint, CancellationToken cancellationToken)
+    public Task<System.Net.Sockets.Socket> ConnectAsync(IPEndPoint endpoint, CancellationToken cancellationToken)
     {
         Attempts.Enqueue(endpoint);
         return _direct.ConnectAsync(_map.GetValueOrDefault(endpoint, endpoint), cancellationToken);
@@ -156,4 +156,11 @@ public static class Wait
         listener.Stop();
         return port;
     }
+}
+
+/// <summary>A fresh file connection ledger in a private temp directory per test proxy.</summary>
+public static class TestLedgers
+{
+    public static FileConnectionLedger Create() =>
+        new(Path.Combine(Path.GetTempPath(), "automataflow-test-ledgers", Guid.NewGuid().ToString("N")), Guid.NewGuid());
 }

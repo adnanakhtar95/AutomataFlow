@@ -20,11 +20,19 @@ public static class DependencyInjection
 
         services.AddOptions<BrowserEngineOptions>().Bind(configuration.GetSection(BrowserEngineOptions.SectionName)).ValidateOnStart();
         services.AddSingleton<IValidateOptions<BrowserEngineOptions>, BrowserEngineOptionsValidator>();
-        services.AddOptions<EgressProxyOptions>().Bind(configuration.GetSection(EgressProxyOptions.SectionName));
+        services.AddOptions<EgressProxyOptions>().Bind(configuration.GetSection(EgressProxyOptions.SectionName)).ValidateOnStart();
+        services.AddSingleton<IValidateOptions<EgressProxyOptions>, EgressProxyOptionsValidator>();
 
         services.TryAddSingleton(TimeProvider.System);
         services.TryAddSingleton<IDnsResolver, SystemDnsResolver>();
         services.TryAddSingleton<IUpstreamConnector, DirectUpstreamConnector>();
+        services.TryAddSingleton<IConnectionIdentityProvider, OsConnectionIdentityProvider>();
+
+        // One ledger per process (= Worker incarnation). Phase 5 passes the registered incarnation id instead.
+        services.TryAddSingleton<IConnectionLedger>(sp => new FileConnectionLedger(
+            sp.GetRequiredService<IOptions<EgressProxyOptions>>().Value.LedgerDirectory
+                ?? Path.Combine(Path.GetTempPath(), "automataflow", "ledger"),
+            Guid.NewGuid()));
         services.AddSingleton<EgressProxyServer>();
         services.AddSingleton<BrowserHost>();
         services.AddSingleton<IBrowserHost>(sp => sp.GetRequiredService<BrowserHost>());

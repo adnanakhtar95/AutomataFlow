@@ -31,6 +31,50 @@ public sealed class EgressProxyOptions
     public int MaxTotalConnections { get; set; } = 512;
 
     public int MaxHeaderBytes { get; set; } = 32 * 1024;
+
+    /// <summary>Bound for the revocation barrier's B2 + B4 (ADR-060), 1..60 s.</summary>
+    public int RevocationTimeoutSeconds { get; set; } = 10;
+
+    /// <summary>Fail-fast only (Linux TCP_USER_TIMEOUT in ms, Windows TCP_MAXRT in s); never a guarantee (§7.6.4). 5..120 s.</summary>
+    public int UpstreamUserTimeoutSeconds { get; set; } = 30;
+
+    /// <summary>Directory of the per-incarnation connection ledger (§7.6.5). Defaults to the temp directory.</summary>
+    public string? LedgerDirectory { get; set; }
+}
+
+/// <summary>Hand-written validation (ADR-016) of the egress proxy options.</summary>
+public sealed class EgressProxyOptionsValidator : IValidateOptions<EgressProxyOptions>
+{
+    public ValidateOptionsResult Validate(string? name, EgressProxyOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        var errors = new List<string>();
+
+        void Range(string field, long value, long min, long max)
+        {
+            if (value < min || value > max)
+            {
+                errors.Add($"{field} must be between {min} and {max} (was {value}).");
+            }
+        }
+
+        Range(nameof(options.HeaderTimeoutSeconds), options.HeaderTimeoutSeconds, 1, 120);
+        Range(nameof(options.DnsTimeoutSeconds), options.DnsTimeoutSeconds, 1, 60);
+        Range(nameof(options.ConnectTimeoutSeconds), options.ConnectTimeoutSeconds, 1, 120);
+        Range(nameof(options.IdleTimeoutSeconds), options.IdleTimeoutSeconds, 1, 3600);
+        Range(nameof(options.MaxTunnelLifetimeSeconds), options.MaxTunnelLifetimeSeconds, 1, 24 * 3600);
+        Range(nameof(options.MaxConnectionsPerSession), options.MaxConnectionsPerSession, 1, 1024);
+        Range(nameof(options.MaxTotalConnections), options.MaxTotalConnections, 1, 65_536);
+        Range(nameof(options.MaxHeaderBytes), options.MaxHeaderBytes, 1024, 1024 * 1024);
+        Range(nameof(options.RevocationTimeoutSeconds), options.RevocationTimeoutSeconds, 1, 60);
+        Range(nameof(options.UpstreamUserTimeoutSeconds), options.UpstreamUserTimeoutSeconds, 5, 120);
+        if (options.MaxBytesPerSession < 1)
+        {
+            errors.Add("MaxBytesPerSession must be positive.");
+        }
+
+        return errors.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(errors);
+    }
 }
 
 public enum EgressProxyState
@@ -59,6 +103,8 @@ public sealed class EgressProxyServer : IAsyncDisposable
     private readonly EgressProxyOptions _options;
     private readonly IDnsResolver _dns;
     private readonly IUpstreamConnector _connector;
+    private readonly IConnectionLedger _ledger;
+    private readonly IConnectionIdentityProvider _identities;
     private readonly TimeProvider _time;
     private readonly ILogger<EgressProxyServer> _logger;
     private readonly ConcurrentDictionary<long, TcpClient> _clients = new();
@@ -73,6 +119,8 @@ public sealed class EgressProxyServer : IAsyncDisposable
         IOptions<EgressProxyOptions> options,
         IDnsResolver dns,
         IUpstreamConnector connector,
+        IConnectionLedger ledger,
+        IConnectionIdentityProvider identities,
         TimeProvider time,
         ILogger<EgressProxyServer> logger)
     {
@@ -80,11 +128,20 @@ public sealed class EgressProxyServer : IAsyncDisposable
         _options = options.Value;
         _dns = dns;
         _connector = connector;
+        _ledger = ledger;
+        _identities = identities;
         _time = time;
         _logger = logger;
+        Sessions = new EgressSessionRegistry(_options.MaxConnectionsPerSession, TimeSpan.FromSeconds(_options.RevocationTimeoutSeconds));
     }
 
-    public EgressSessionRegistry Sessions { get; } = new();
+    public EgressSessionRegistry Sessions { get; }
+
+    /// <summary>The connection ledger of this incarnation (read by the Phase 5 process-death supervisor).</summary>
+    public IConnectionLedger Ledger => _ledger;
+
+    /// <summary>Deterministic interleaving hooks for tests; always null in production.</summary>
+    internal EgressTestHooks? Hooks { get; set; }
 
     public EgressProxyState State { get; private set; }
 
@@ -203,7 +260,7 @@ public sealed class EgressProxyServer : IAsyncDisposable
 
     private async Task HandleClientAsync(long connectionId, TcpClient client, CancellationToken stop)
     {
-        EgressSession? session = null;
+        ConnectionLease? lease = null;
         try
         {
             client.NoDelay = true;
@@ -230,39 +287,47 @@ public sealed class EgressProxyServer : IAsyncDisposable
             }
 
             var (user, password) = ParseBasicCredentials(request!.GetHeader("Proxy-Authorization"));
-            session = Sessions.Authenticate(user, password);
-            if (session is null)
+            var session = Sessions.Authenticate(user, password);
+            if (Hooks is not null)
+            {
+                await Hooks.AtAsync(EgressHookPoint.AfterAuthenticate, connectionId).ConfigureAwait(false);
+            }
+
+            // Authentication is not admission: TryAdmit re-checks revocation under the session lock (gap G1).
+            var admission = session is null ? EgressAdmission.Revoked : session.TryAdmit(connectionId, client.Client, out lease);
+            if (admission == EgressAdmission.Revoked)
             {
                 await WriteResponseAsync(stream, 407, "Proxy Authentication Required", EgressReasons.Unauthenticated, stop, proxyAuthenticate: true).ConfigureAwait(false);
                 return;
             }
 
-            if (!session.TryOpenConnection(_options.MaxConnectionsPerSession))
+            if (admission == EgressAdmission.TooManyConnections)
             {
-                Record(session, false, EgressReasons.TooManyConnections, request.Method, "-", null);
+                Record(session!, false, EgressReasons.TooManyConnections, request.Method, "-", null);
                 await WriteResponseAsync(stream, 503, "Service Unavailable", EgressReasons.TooManyConnections, stop).ConfigureAwait(false);
-                session = null; // not tracked, nothing to release
                 return;
             }
 
-            session.Track(connectionId, client);
-            await HandleRequestAsync(session, request, stream, leftover, stop).ConfigureAwait(false);
+            await HandleRequestAsync(session!, connectionId, request, stream, leftover, stop).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is OperationCanceledException or IOException or SocketException or ObjectDisposedException)
         {
-            // Connection closed, timed out, or proxy stopping.
+            // Connection closed, timed out, revoked, or proxy stopping.
         }
         finally
         {
-            session?.CloseConnection(connectionId);
+            client.Dispose();
+            lease?.Dispose();
             _clients.TryRemove(connectionId, out _);
             Interlocked.Decrement(ref _totalConnections);
-            client.Dispose();
         }
     }
 
-    private async Task HandleRequestAsync(EgressSession session, ProxyRequest request, NetworkStream client, byte[] leftover, CancellationToken stop)
+    private async Task HandleRequestAsync(EgressSession session, long connectionId, ProxyRequest request, NetworkStream client, byte[] leftover, CancellationToken outerStop)
     {
+        // Revocation wakes every wait of this connection (DNS, connect, reads). It never interrupts an admitted write.
+        using var connectionStop = CancellationTokenSource.CreateLinkedTokenSource(outerStop, session.RevocationToken);
+        var stop = connectionStop.Token;
         string rawHost;
         int port;
         string? ruleScheme;
@@ -356,34 +421,37 @@ public sealed class EgressProxyServer : IAsyncDisposable
 
         // Pin: connect to exactly the address that was validated. IPv4-mapped IPv6 is connected as IPv4.
         var pinned = addresses[0].IsIPv4MappedToIPv6 ? addresses[0].MapToIPv4() : addresses[0];
-        Stream upstream;
-        using (var connectTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop))
+        var (channel, failure) = await UpstreamChannel.OpenAsync(
+            session,
+            connectionId,
+            new IPEndPoint(pinned, port),
+            _connector,
+            _ledger,
+            _identities,
+            _options.UpstreamUserTimeoutSeconds,
+            TimeSpan.FromSeconds(_options.ConnectTimeoutSeconds),
+            Hooks,
+            stop).ConfigureAwait(false);
+        if (channel is null)
         {
-            connectTimeout.CancelAfter(TimeSpan.FromSeconds(_options.ConnectTimeoutSeconds));
-            try
-            {
-                upstream = await _connector.ConnectAsync(new IPEndPoint(pinned, port), connectTimeout.Token).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is SocketException or IOException or OperationCanceledException && !stop.IsCancellationRequested)
-            {
-                await DenyAsync(session, request, client, 502, "Bad Gateway", EgressReasons.UpstreamUnreachable, target, pinned.ToString(), stop).ConfigureAwait(false);
-                return;
-            }
+            var reason = failure == "upstream-unreachable" ? EgressReasons.UpstreamUnreachable : failure!;
+            await DenyAsync(session, request, client, 502, "Bad Gateway", reason, target, pinned.ToString(), outerStop).ConfigureAwait(false);
+            return;
         }
 
-        await using (upstream.ConfigureAwait(false))
+        try
         {
             Record(session, true, "allowed", request.Method, target, pinned.ToString());
 
             if (request.IsConnect)
             {
                 await client.WriteAsync("HTTP/1.1 200 Connection Established\r\n\r\n"u8.ToArray(), stop).ConfigureAwait(false);
-                if (leftover.Length > 0)
+                if (leftover.Length > 0 && !await channel.WriteAsync(leftover).ConfigureAwait(false))
                 {
-                    await upstream.WriteAsync(leftover, stop).ConfigureAwait(false);
+                    return;
                 }
 
-                await RelayAsync(session, request.Method, target, client, upstream, bidirectional: true, stop).ConfigureAwait(false);
+                await RelayAsync(session, request.Method, target, client, channel, bidirectional: true, stop).ConfigureAwait(false);
                 return;
             }
 
@@ -399,13 +467,22 @@ public sealed class EgressProxyServer : IAsyncDisposable
             }
 
             forwarded.Append("Connection: close\r\n\r\n");
-            await upstream.WriteAsync(Encoding.ASCII.GetBytes(forwarded.ToString()), stop).ConfigureAwait(false);
-            await CopyBodyAsync(client, upstream, leftover, contentLength, stop).ConfigureAwait(false);
-            await RelayAsync(session, request.Method, target, upstream, client, bidirectional: false, stop).ConfigureAwait(false);
+            if (!await channel.WriteAsync(Encoding.ASCII.GetBytes(forwarded.ToString())).ConfigureAwait(false)
+                || !await CopyBodyAsync(client, channel, leftover, contentLength, stop).ConfigureAwait(false))
+            {
+                return;
+            }
+
+            await RelayAsync(session, request.Method, target, client, channel, bidirectional: false, stop).ConfigureAwait(false);
+        }
+        finally
+        {
+            // Normal end of the connection. During revocation the barrier has already aborted the socket (B3).
+            channel.Socket.Dispose();
         }
     }
 
-    private async Task RelayAsync(EgressSession session, string method, string target, Stream a, Stream b, bool bidirectional, CancellationToken stop)
+    private async Task RelayAsync(EgressSession session, string method, string target, NetworkStream client, UpstreamChannel upstream, bool bidirectional, CancellationToken stop)
     {
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         lifetime.CancelAfter(TimeSpan.FromSeconds(_options.MaxTunnelLifetimeSeconds));
@@ -413,20 +490,59 @@ public sealed class EgressProxyServer : IAsyncDisposable
         var idleTimeout = TimeSpan.FromSeconds(_options.IdleTimeoutSeconds);
         idle.CancelAfter(idleTimeout);
 
-        var forward = PumpAsync(session, method, target, a, b, idle, idleTimeout);
-        var backward = bidirectional ? PumpAsync(session, method, target, b, a, idle, idleTimeout) : null;
-        if (backward is null)
+        var fromUpstream = PumpToClientAsync(session, method, target, upstream, client, idle, idleTimeout);
+        var toUpstream = bidirectional ? PumpToUpstreamAsync(session, method, target, client, upstream, idle, idleTimeout) : null;
+        if (toUpstream is null)
         {
-            await forward.ConfigureAwait(false);
+            await fromUpstream.ConfigureAwait(false);
             return;
         }
 
-        await Task.WhenAny(forward, backward).ConfigureAwait(false);
+        await Task.WhenAny(fromUpstream, toUpstream).ConfigureAwait(false);
         await idle.CancelAsync().ConfigureAwait(false);
-        await Task.WhenAll(forward, backward).ConfigureAwait(false);
+        await Task.WhenAll(fromUpstream, toUpstream).ConfigureAwait(false);
     }
 
-    private async Task PumpAsync(EgressSession session, string method, string target, Stream from, Stream to, CancellationTokenSource idle, TimeSpan idleTimeout)
+    /// <summary>Browser to destination: every chunk passes the upstream write gate (no write after revocation began).</summary>
+    private async Task PumpToUpstreamAsync(EgressSession session, string method, string target, NetworkStream from, UpstreamChannel to, CancellationTokenSource idle, TimeSpan idleTimeout)
+    {
+        var buffer = ArrayPool<byte>.Shared.Rent(UpstreamChannel.MaxChunkBytes);
+        try
+        {
+            while (true)
+            {
+                var read = await from.ReadAsync(buffer.AsMemory(0, UpstreamChannel.MaxChunkBytes), idle.Token).ConfigureAwait(false);
+                if (read == 0)
+                {
+                    return;
+                }
+
+                if (!session.AddBytes(read, _options.MaxBytesPerSession))
+                {
+                    Record(session, false, EgressReasons.QuotaExceeded, method, target, null);
+                    return;
+                }
+
+                if (!await to.WriteAsync(buffer.AsMemory(0, read)).ConfigureAwait(false))
+                {
+                    return;
+                }
+
+                idle.CancelAfter(idleTimeout);
+            }
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or IOException or SocketException or ObjectDisposedException)
+        {
+            // Tunnel closed, idle, lifetime exceeded, revoked, or proxy stopping.
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    /// <summary>Destination to browser: responses are not upstream payload and need no gate.</summary>
+    private async Task PumpToClientAsync(EgressSession session, string method, string target, UpstreamChannel from, NetworkStream to, CancellationTokenSource idle, TimeSpan idleTimeout)
     {
         var buffer = ArrayPool<byte>.Shared.Rent(16 * 1024);
         try
@@ -451,7 +567,7 @@ public sealed class EgressProxyServer : IAsyncDisposable
         }
         catch (Exception ex) when (ex is OperationCanceledException or IOException or SocketException or ObjectDisposedException)
         {
-            // Tunnel closed, idle, lifetime exceeded, or proxy stopping.
+            // Tunnel closed, idle, lifetime exceeded, revoked, or proxy stopping.
         }
         finally
         {
@@ -459,29 +575,36 @@ public sealed class EgressProxyServer : IAsyncDisposable
         }
     }
 
-    private static async Task CopyBodyAsync(Stream client, Stream upstream, byte[] leftover, long contentLength, CancellationToken stop)
+    /// <summary>Copies a plain-HTTP request body; every chunk passes the write gate. False if the gate refused.</summary>
+    private static async Task<bool> CopyBodyAsync(NetworkStream client, UpstreamChannel upstream, byte[] leftover, long contentLength, CancellationToken stop)
     {
         var fromLeftover = (int)Math.Min(leftover.Length, contentLength);
-        if (fromLeftover > 0)
+        if (fromLeftover > 0 && !await upstream.WriteAsync(leftover.AsMemory(0, fromLeftover)).ConfigureAwait(false))
         {
-            await upstream.WriteAsync(leftover.AsMemory(0, fromLeftover), stop).ConfigureAwait(false);
+            return false;
         }
 
         var remaining = contentLength - fromLeftover;
-        var buffer = ArrayPool<byte>.Shared.Rent(16 * 1024);
+        var buffer = ArrayPool<byte>.Shared.Rent(UpstreamChannel.MaxChunkBytes);
         try
         {
             while (remaining > 0)
             {
-                var read = await client.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, remaining)), stop).ConfigureAwait(false);
+                var read = await client.ReadAsync(buffer.AsMemory(0, (int)Math.Min(UpstreamChannel.MaxChunkBytes, remaining)), stop).ConfigureAwait(false);
                 if (read == 0)
                 {
-                    return;
+                    return true;
                 }
 
-                await upstream.WriteAsync(buffer.AsMemory(0, read), stop).ConfigureAwait(false);
+                if (!await upstream.WriteAsync(buffer.AsMemory(0, read)).ConfigureAwait(false))
+                {
+                    return false;
+                }
+
                 remaining -= read;
             }
+
+            return true;
         }
         finally
         {

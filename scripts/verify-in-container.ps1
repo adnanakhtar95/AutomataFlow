@@ -15,7 +15,11 @@
 #>
 [CmdletBinding()]
 param(
-    [switch]$RebuildImage
+    [switch]$RebuildImage,
+
+    # Optional `dotnet test --filter` expression for targeted runs during development. Phase verification always
+    # runs WITHOUT a filter (the complete suite).
+    [string]$Filter
 )
 
 $ErrorActionPreference = 'Stop'
@@ -53,8 +57,10 @@ mkdir -p ~/work && cd /src
 tar cf - --exclude=./.git --exclude=./.vs --exclude=bin --exclude=obj . | tar xf - -C ~/work
 cd ~/work
 dotnet build AutomataFlow.slnx
-dotnet test AutomataFlow.slnx --no-build
+dotnet test AutomataFlow.slnx --no-build __FILTER__
 '@ -replace "`r", ''
+$filterArgument = if ($Filter) { "--filter '" + ($Filter -replace "'", "") + "'" } else { '' }
+$script = $script.Replace('__FILTER__', $filterArgument)
 
 docker run --rm --init --shm-size=1g `
     --security-opt "seccomp=$(Join-Path $root 'deploy/verify/chromium-seccomp.json')" `

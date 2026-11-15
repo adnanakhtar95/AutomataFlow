@@ -159,6 +159,49 @@ public sealed class FixtureServers : IAsyncDisposable
                 case "/hang":
                     await Task.Delay(Timeout.Infinite, ctx.RequestAborted);
                     break;
+                case "/hang-form":
+                    await ctx.Response.WriteAsync(Html("<form method='post' action='/hang'><button data-testid='go' type='submit'>go</button></form>"));
+                    break;
+                case "/upload":
+                    await ctx.Response.WriteAsync(Html(
+                        "<form method='post' action='/upload-echo' enctype='multipart/form-data'>" +
+                        "<input data-testid='file' type='file' name='file'><button data-testid='send' type='submit'>send</button></form>"));
+                    break;
+                case "/upload-echo":
+                    var form = await ctx.Request.ReadFormAsync();
+                    var file = form.Files["file"];
+                    using (var content = new MemoryStream())
+                    {
+                        if (file is not null)
+                        {
+                            await file.CopyToAsync(content);
+                        }
+
+                        var hash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(content.ToArray()));
+                        await ctx.Response.WriteAsync(Html(
+                            $"<div data-testid='name'>{WebUtility.HtmlEncode(file?.FileName)}</div><div data-testid='length'>{content.Length}</div>" +
+                            $"<div data-testid='type'>{WebUtility.HtmlEncode(file?.ContentType)}</div><div data-testid='sha'>{hash}</div>"));
+                    }
+
+                    break;
+                case "/probes":
+                    await ctx.Response.WriteAsync(Html(
+                        "<div data-testid='shown'>shown</div><div data-testid='hidden' style='display:none'>hidden</div>" +
+                        "<span data-testid='twin'>a</span><span data-testid='twin'>b</span>"));
+                    break;
+                case "/rows":
+                    await ctx.Response.WriteAsync(Html(
+                        "<table><tbody>" +
+                        "<tr data-testid='row' data-key='op-1' data-id='C-1'><td data-testid='email'>ann@example.test</td></tr>" +
+                        "<tr data-testid='row' data-key='op-2' data-id='C-2'><td data-testid='email'>joann@example.test</td></tr>" +
+                        "<tr data-testid='row' data-id='C-3'><td>no email cell</td></tr>" +
+                        "</tbody></table>" +
+                        "<table><tbody><tr data-testid='bad-row'><td data-testid='email'>x</td><td data-testid='email'>y</td></tr></tbody></table>" +
+                        "<p data-testid='empty-indicator'>3 rows</p>"));
+                    break;
+                case "/many-rows":
+                    await ctx.Response.WriteAsync(Html("<ul>" + string.Concat(Enumerable.Range(1, 60).Select(i => $"<li data-testid='item' data-n='{i}'>{i}</li>")) + "</ul>"));
+                    break;
                 case "/late":
                     await ctx.Response.WriteAsync(Html("<script>setTimeout(()=>{const d=document.createElement('div');d.dataset.testid='late';d.textContent='arrived';document.body.appendChild(d);},400);</script>"));
                     break;

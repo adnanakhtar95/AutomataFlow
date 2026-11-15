@@ -59,6 +59,14 @@ public sealed class DownloadLimits
     ];
 }
 
+public sealed class UploadLimits
+{
+    public const long ServerMaximumBytes = 100L * 1024 * 1024;
+
+    /// <summary>Largest in-memory upload payload the browser layer accepts (docs/PHASE4_PLAN.md §1.6, default 10 MB).</summary>
+    public long MaxBytes { get; set; } = 10L * 1024 * 1024;
+}
+
 /// <summary>Browser engine configuration (section <c>Automation:Browser</c>), validated at startup.</summary>
 public sealed class BrowserEngineOptions
 {
@@ -99,6 +107,16 @@ public sealed class BrowserEngineOptions
     public BrowserTimeouts Timeouts { get; set; } = new();
 
     public DownloadLimits Downloads { get; set; } = new();
+
+    public UploadLimits Uploads { get; set; } = new();
+
+    /// <summary>
+    /// The ONLY source of private-network exceptions (docs/PHASE4_PLAN.md §16 R3, ADR-047): exact origins
+    /// (<c>scheme://host:port</c>, no wildcards) that a session rule may reach on loopback/private addresses. Honoured
+    /// only in <see cref="ExecutionMode.Development"/>; any entry outside Development fails startup validation. No request,
+    /// workflow, parameter or record can grant private-network access.
+    /// </summary>
+    public List<string> DevelopmentPrivateNetworkOrigins { get; set; } = [];
 }
 
 /// <summary>Hand-written validation (ADR-016). Security-relevant combinations are rejected, not warned about.</summary>
@@ -147,8 +165,24 @@ public sealed class BrowserEngineOptionsValidator : IValidateOptions<BrowserEngi
         Range("Downloads.MaxBytes", d.MaxBytes, 1, 1024L * 1024 * 1024);
         Range("Downloads.MaxCount", d.MaxCount, 0, 100);
 
+        var u = options.Uploads ?? new UploadLimits();
+        Range("Uploads.MaxBytes", u.MaxBytes, 1, UploadLimits.ServerMaximumBytes);
+
+        foreach (var origin in options.DevelopmentPrivateNetworkOrigins ?? [])
+        {
+            if (TrustedOrigins.TryCanonicalize(origin) is null)
+            {
+                errors.Add($"DevelopmentPrivateNetworkOrigins entry '{origin}' must be an exact origin scheme://host[:port] without wildcards, path or credentials.");
+            }
+        }
+
         if (options.Mode != ExecutionMode.Development)
         {
+            if ((options.DevelopmentPrivateNetworkOrigins?.Count ?? 0) > 0)
+            {
+                errors.Add("DevelopmentPrivateNetworkOrigins may only be configured in Development (ADR-047).");
+            }
+
             if (!options.Headless)
             {
                 errors.Add("Headless must be true outside Development.");
@@ -169,5 +203,28 @@ public sealed class BrowserEngineOptionsValidator : IValidateOptions<BrowserEngi
         }
 
         return errors.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(errors);
+    }
+}
+
+/// <summary>Canonical comparison of trusted Development origins with session rules (ADR-047).</summary>
+internal static class TrustedOrigins
+{
+    /// <summary>Returns the canonical <c>scheme://host:port</c> form, or <c>null</c> if the entry is not an exact origin.</summary>
+    public static string? TryCanonicalize(string? origin)
+    {
+        if (string.IsNullOrWhiteSpace(origin))
+        {
+            return null;
+        }
+
+        try
+        {
+            var rule = AutomataFlow.Application.Network.AllowedHostRule.Parse(origin);
+            return rule.IsWildcard ? null : rule.ToString();
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
     }
 }

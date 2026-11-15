@@ -62,7 +62,7 @@ public sealed class EgressProxyTests(BrowserFixture fixture) : IAsyncLifetime, I
     {
         var options = new EgressProxyOptions();
         configure?.Invoke(options);
-        var proxy = new EgressProxyServer(Options.Create(options), _dns, _connector, TimeProvider.System, NullLogger<EgressProxyServer>.Instance);
+        var proxy = new EgressProxyServer(Options.Create(options), _dns, _connector, TestLedgers.Create(), new OsConnectionIdentityProvider(), TimeProvider.System, NullLogger<EgressProxyServer>.Instance);
         proxy.Start();
         return proxy;
     }

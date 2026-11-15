@@ -1767,7 +1767,7 @@ It runs against `InMemoryAttemptJournal` in Phase 4, and unchanged against Postg
    - [x] D1–D7 approved (2026-11-12) and recorded (ADR-037 to ADR-043); sink rules accepted and recorded (ADR-044).
    - [x] Round 2–9 decisions recorded (ADR-045 to ADR-060); final approval granted 2026-11-15.
 2. [x] The five pure policy types moved to Application; runtime enforcement unchanged in Automation; all 508 Phase 3 tests green after the move. (Step 1, 2026-11-15: two consecutive green container runs, 523/523 including 15 new architecture tests.)
-3. [ ] Phase 3 extensions are additive:
+3. [ ] Phase 3 extensions are additive. (Step 2 implemented and verified 2026-11-15: all items below except the horizon races H1–H4, which need the `RepeatSafetyEvaluator` and are delivered with step 6. The Windows identity path is implemented but verified only on Linux in the container; Windows verification is pending.)
    - a step timeout is one total deadline and never terminates the session;
    - uploads are content-only;
    - probes never throw for missing elements;

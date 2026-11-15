@@ -120,6 +120,30 @@ Never rely on the initial `Navigate` URL. Every browser connection goes through 
 
 Caller cancellation throws `OperationCanceledException` and closes the session, which aborts in-flight browser calls within milliseconds (spike E7).
 
+## Phase 4 step 2 extensions (docs/PHASE4_PLAN.md §0, §7.6; ADR-038, ADR-047, ADR-053, ADR-060)
+- **`OperationOptions`:** every `IBrowserSession` operation accepts it. Its timeout is ONE total deadline for the whole operation, including `SubmitAsync`'s click and load wait. Without options, the Phase 3 per-operation defaults apply unchanged. A step timeout never closes the session.
+- **New operations:**
+  - **`UploadAsync`:** in-memory `FilePayload` only, with a sanitized name and `Uploads.MaxBytes` (default 10 MB). It never takes a filesystem path (source-scanned).
+  - **`CountAsync` / `IsVisibleAsync`:** immediate, no auto-wait. Missing elements give 0 or false, and several matches give `ElementNotUnique` for `IsVisibleAsync`.
+  - **`CurrentUrl`:** raw value for conditions; reading it logs only the redacted URL.
+  - **`QueryRowsAsync`:** at most 50 rows, read through element reads only. If more rows match, it returns the count only.
+  - **`RegisterSensitive`.**
+- **Private network (ADR-047):** a private-network rule is honoured only in Development, and only for an exact origin listed in `Automation:Browser:DevelopmentPrivateNetworkOrigins`. The request flag alone is refused (`PolicyViolation`). The option is rejected at startup outside Development.
+- **Revocation barrier (ADR-060):** `EgressSession.RevokeAsync` runs B1–B5:
+  - B1: atomic closure of connection admission and of the upstream write gate under the session lock;
+  - B2: waits for writes admitted before revocation;
+  - B3: abortive (RST) close of upstream sockets, including keep-alive CONNECT tunnels, and close of browser-side sockets;
+  - B4: waits for every handler;
+  - B5: `Completed` or `TimedOut` (`Automation:EgressProxy:RevocationTimeoutSeconds`, default 10).
+- **Barrier wiring:**
+  - `BrowserSession.DisposeAsync` runs the barrier BEFORE closing the context;
+  - `IBrowserSession.EgressRevoked` is true only for `Completed`;
+  - `Dispose()` on an egress session is best effort and never a fence.
+- **`UpstreamChannel`:** the only sender upstream (source-scanned). Every payload chunk (≤ 16 KB) is sent inside a write-gate admission without a cancellation token.
+- **Connection ledger:** before any payload, each upstream connection's tuple and OS identity are fsync-appended to a per-incarnation ledger (`Automation:EgressProxy:LedgerDirectory`). The identity is the Linux `SO_COOKIE`, or the Windows owner-module TCP row's `liCreateTimestamp`, matched by tuple and own PID. If the identity or the ledger is unavailable, the connection is aborted unused (fail closed).
+- **Fail-fast sockets:** `TCP_USER_TIMEOUT` (Linux, ms) and `TCP_MAXRT` (Windows, s), `Automation:EgressProxy:UpstreamUserTimeoutSeconds` (default 30). These make stalled connections fail fast and are not a guarantee.
+- **Drain logic:** `AutomataFlow.Automation.Network.Fencing.ConnectionDrain` holds the supervisor's drain decision logic (§7.6.5). The OS socket-table readers and the Linux `SOCK_DESTROY` destroyer are Phase 5.
+
 ## Verification image (ADR-033): build and reproduce
 - **Run everything:** `scripts/verify-in-container.ps1` is the standard way to build and test, including real-browser tests. It builds the image automatically when missing; `-RebuildImage` forces a rebuild.
 - **Manual build:**

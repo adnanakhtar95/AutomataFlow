@@ -17,6 +17,7 @@ public enum BrowserErrorCode
     DownloadRejected,
     PolicyViolation,
     BrowserNotInstalled,
+    UploadRejected,
 }
 
 /// <summary>

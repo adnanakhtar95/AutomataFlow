@@ -176,3 +176,104 @@ public sealed record NavigationResult(int Status, string FinalUrl, IReadOnlyList
 public sealed record DownloadResult(ArtifactDescriptor Artifact, string SuggestedFileName);
 
 public sealed record ScreenshotRequest(bool FullPage = false, string Label = "screenshot");
+
+/// <summary>
+/// Per-call options (docs/PHASE4_PLAN.md §0, ADR-053). <see cref="Timeout"/> is ONE total deadline for everything the
+/// operation does, including composite operations (submit = click + load wait). Expiry fails only this operation and
+/// never closes the session (ADR-038). When <c>null</c>, the configured per-operation defaults apply.
+/// </summary>
+public sealed record OperationOptions
+{
+    public static readonly TimeSpan MaxTimeout = TimeSpan.FromMinutes(10);
+
+    public OperationOptions(TimeSpan? timeout = null)
+    {
+        if (timeout is { } t && (t <= TimeSpan.Zero || t > MaxTimeout))
+        {
+            throw new ArgumentOutOfRangeException(nameof(timeout), timeout, $"Operation timeouts must be > 0 and <= {MaxTimeout.TotalMinutes} minutes.");
+        }
+
+        Timeout = timeout;
+    }
+
+    public TimeSpan? Timeout { get; }
+
+    public static OperationOptions WithTimeout(TimeSpan timeout) => new(timeout);
+}
+
+/// <summary>
+/// A file to upload, held in memory. The engine never accepts a filesystem path (ADR-038): the content is passed to the
+/// browser as an in-memory payload and the file name is sanitized before use.
+/// </summary>
+public sealed record UploadFile
+{
+    public UploadFile(string fileName, string contentType, ReadOnlyMemory<byte> content)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(contentType);
+        FileName = fileName;
+        ContentType = contentType;
+        Content = content;
+    }
+
+    /// <summary>Name as supplied; only its sanitized last segment is ever given to the browser.</summary>
+    public string FileName { get; }
+
+    public string ContentType { get; }
+
+    public ReadOnlyMemory<byte> Content { get; }
+
+    public override string ToString() => $"[{FileNameSanitizer.Sanitize(FileName, "upload")}, {Content.Length} bytes]";
+}
+
+public enum RowValueKind
+{
+    /// <summary>An attribute of the row element itself.</summary>
+    Attribute,
+
+    /// <summary>The inner text of a child element inside the row (0 matches = null, more than 1 = ElementNotUnique).</summary>
+    ChildText,
+}
+
+/// <summary>One value to read from every row (reconcileMatch keys and fields, docs/PHASE4_PLAN.md §10.3).</summary>
+public sealed record RowValueSpec
+{
+    private RowValueSpec(RowValueKind kind, string? attribute, ElementSelector? child)
+    {
+        Kind = kind;
+        Attribute = attribute;
+        Child = child;
+    }
+
+    public RowValueKind Kind { get; }
+
+    public string? Attribute { get; }
+
+    public ElementSelector? Child { get; }
+
+    public static RowValueSpec OfAttribute(string attribute)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(attribute);
+        if (attribute.Length > 100 || !attribute.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or ':' or '.'))
+        {
+            throw new ArgumentException("Attribute names are limited to 100 ASCII letters, digits and - _ : .", nameof(attribute));
+        }
+
+        return new RowValueSpec(RowValueKind.Attribute, attribute, null);
+    }
+
+    public static RowValueSpec OfChildText(ElementSelector child) =>
+        new(RowValueKind.ChildText, null, child ?? throw new ArgumentNullException(nameof(child)));
+
+    public override string ToString() => Kind == RowValueKind.Attribute ? $"@{Attribute}" : $"text({Child})";
+}
+
+/// <param name="Count">Number of rows matched at read time.</param>
+/// <param name="Values">One list per row (in document order) with one value per requested spec; EMPTY when
+/// <see cref="Truncated"/> because the row count exceeded the requested maximum.</param>
+public sealed record RowSnapshot(int Count, IReadOnlyList<IReadOnlyList<string?>> Values)
+{
+    public const int MaxRowsLimit = 50;
+
+    public bool Truncated => Count > 0 && Values.Count == 0;
+}

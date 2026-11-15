@@ -44,6 +44,7 @@ public sealed class BrowserSessionFactory : IBrowserSessionFactory, IDisposable
     {
         ArgumentNullException.ThrowIfNull(request);
         ValidatePolicyForMode(request);
+        request = request with { Policy = EffectivePolicy(request.Policy) };
 
         await _slots.WaitAsync(cancellationToken).ConfigureAwait(false);
         BrowserLease? lease = null;
@@ -135,10 +136,31 @@ public sealed class BrowserSessionFactory : IBrowserSessionFactory, IDisposable
                 throw new BrowserOperationException(BrowserErrorCode.PolicyViolation, $"Private-network rule {rule} is only allowed in Development mode.", isTransient: false);
             }
 
+            // ADR-047: a request can never grant private-network access by itself. The rule's origin must also be listed
+            // in the trusted server configuration DevelopmentPrivateNetworkOrigins.
+            if (rule.AllowPrivateNetwork && !IsTrustedDevelopmentOrigin(rule))
+            {
+                throw new BrowserOperationException(BrowserErrorCode.PolicyViolation, $"Private-network rule {rule} is not listed in the trusted DevelopmentPrivateNetworkOrigins configuration.", isTransient: false);
+            }
+
             if (rule.Scheme != "https" && _options.Mode == ExecutionMode.HostedMultiTenant)
             {
                 throw new BrowserOperationException(BrowserErrorCode.PolicyViolation, $"Rule {rule} is not allowed: hosted mode is https-only.", isTransient: false);
             }
         }
     }
+
+    private bool IsTrustedDevelopmentOrigin(Application.Network.AllowedHostRule rule) =>
+        _options.Mode == ExecutionMode.Development
+        && !rule.IsWildcard
+        && _options.DevelopmentPrivateNetworkOrigins.Any(o => string.Equals(TrustedOrigins.TryCanonicalize(o), rule.ToString(), StringComparison.Ordinal));
+
+    /// <summary>
+    /// The policy the proxy enforces: private-network access is granted exactly when the request asked for it AND the
+    /// origin is trusted by server configuration in Development (both already verified above). Rebuilt here so the
+    /// effective flag is derived from configuration, never taken from the request object alone.
+    /// </summary>
+    private Application.Network.EgressPolicy EffectivePolicy(Application.Network.EgressPolicy policy) =>
+        new(policy.Rules.Select(r => Application.Network.AllowedHostRule.Parse(
+            r.ToString(), allowPrivateNetwork: r.AllowPrivateNetwork && IsTrustedDevelopmentOrigin(r))));
 }

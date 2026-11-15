@@ -49,6 +49,12 @@ public sealed class EngineHarness : IAsyncDisposable
 
     public static ExecutionScope Scope { get; } = new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 1);
 
+    /// <summary>
+    /// Trusted server configuration for Development engines (ADR-047): the local DemoCrm origin. It is the ONLY way a
+    /// private-network rule is honoured; set once by <see cref="BrowserFixture"/> before any engine is created.
+    /// </summary>
+    public static IReadOnlyList<string> TrustedDevelopmentOrigins { get; set; } = [];
+
     public static EngineHarness Create(
         FixtureServers servers,
         Action<BrowserEngineOptions>? configure = null,
@@ -86,7 +92,12 @@ public sealed class EngineHarness : IAsyncDisposable
             o.Mode = ExecutionMode.Development; // Development only so the local DemoCrm (loopback) can be an explicit exception.
             o.ChromiumSandbox = true;            // sandbox stays ON (ADR-035)
             configure?.Invoke(o);
+            if (o.Mode == ExecutionMode.Development && o.DevelopmentPrivateNetworkOrigins.Count == 0)
+            {
+                o.DevelopmentPrivateNetworkOrigins.AddRange(TrustedDevelopmentOrigins);
+            }
         });
+        services.PostConfigure<EgressProxyOptions>(o => o.LedgerDirectory ??= Path.Combine(Path.GetTempPath(), "automataflow-test-ledgers", Guid.NewGuid().ToString("N")));
         if (configureProxy is not null)
         {
             services.PostConfigure(configureProxy);
@@ -142,6 +153,7 @@ public sealed class BrowserFixture : IAsyncLifetime
     {
         await Servers.StartAsync();
         await DemoCrm.StartAsync();
+        EngineHarness.TrustedDevelopmentOrigins = [DemoCrm.BaseUrl];
         Engine = EngineHarness.Create(Servers);
     }
 

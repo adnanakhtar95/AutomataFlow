@@ -24,22 +24,26 @@ public sealed class SystemDnsResolver : IDnsResolver
     }
 }
 
-/// <summary>Opens the upstream TCP connection to an already validated, pinned address.</summary>
+/// <summary>
+/// Opens the upstream TCP connection to an already validated, pinned address. Returns the connected socket itself:
+/// the proxy needs it for the connection ledger (OS identity), the fail-fast options and the abortive close of the
+/// revocation barrier (ADR-060). Connecting sends no payload, so it may be cancelled at any time.
+/// </summary>
 public interface IUpstreamConnector
 {
-    Task<Stream> ConnectAsync(IPEndPoint endpoint, CancellationToken cancellationToken);
+    Task<Socket> ConnectAsync(IPEndPoint endpoint, CancellationToken cancellationToken);
 }
 
 public sealed class DirectUpstreamConnector : IUpstreamConnector
 {
-    public async Task<Stream> ConnectAsync(IPEndPoint endpoint, CancellationToken cancellationToken)
+    public async Task<Socket> ConnectAsync(IPEndPoint endpoint, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
         var socket = new Socket(endpoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
         try
         {
             await socket.ConnectAsync(endpoint, cancellationToken).ConfigureAwait(false);
-            return new NetworkStream(socket, ownsSocket: true);
+            return socket;
         }
         catch
         {
