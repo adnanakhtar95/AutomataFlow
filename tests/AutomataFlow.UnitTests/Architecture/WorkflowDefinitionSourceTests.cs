@@ -17,7 +17,30 @@ public class WorkflowDefinitionSourceTests
     {
         var folders = Directory.EnumerateDirectories(DefinitionSource).Select(Path.GetFileName).ToHashSet(StringComparer.Ordinal);
 
-        Assert.Superset(new HashSet<string?>(["Definition", "Templates", "Urls", "Records", "Binding", "Actions"], StringComparer.Ordinal), folders);
+        Assert.Superset(new HashSet<string?>(["Definition", "Templates", "Urls", "Records", "Binding", "Actions", "Execution"], StringComparer.Ordinal), folders);
+    }
+
+    /// <summary>
+    /// ADR-058 fail-closed rule 1: no production assembly contains an attempt journal in Phase 4 (the in-memory journal is
+    /// test-only), so no real execution can rely on a non-durable journal.
+    /// </summary>
+    [Fact]
+    public void No_production_code_implements_the_attempt_journal()
+    {
+        var sources = Directory.EnumerateFiles(Path.Combine(ProjectGraph.RepositoryRoot, "src"), "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains(Path.DirectorySeparatorChar + "obj" + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                && !f.Contains(Path.DirectorySeparatorChar + "bin" + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            .ToList();
+        Assert.NotEmpty(sources);
+
+        var implementations = sources
+            .Where(f => Regex.IsMatch(File.ReadAllText(f), @"(class|record|struct)\s+\w+[^{;]*:[^{;]*\bIAttemptJournal\b"))
+            .Select(Path.GetFileName)
+            .ToList();
+        Assert.Empty(implementations);
+
+        var loaded = new[] { typeof(AutomataFlow.Application.Workflows.Execution.IAttemptJournal).Assembly, typeof(AutomataFlow.Automation.Network.RequestGuard).Assembly };
+        Assert.DoesNotContain(loaded.SelectMany(a => a.GetTypes()), t => !t.IsInterface && typeof(AutomataFlow.Application.Workflows.Execution.IAttemptJournal).IsAssignableFrom(t));
     }
 
     [Theory]

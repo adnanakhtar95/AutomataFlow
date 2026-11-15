@@ -11,6 +11,10 @@
     <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Test-only journal, fault injection, fake supervisor and the shared conformance suite (ADR-058). -->
+    <Compile Include="..\Shared\AttemptJournalConformance\**\*.cs" Link="Shared\AttemptJournalConformance\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\src\AutomataFlow.Domain\AutomataFlow.Domain.csproj" />
     <ProjectReference Include="..\..\src\AutomataFlow.Application\AutomataFlow.Application.csproj" />
     <ProjectReference Include="..\..\src\AutomataFlow.Automation\AutomataFlow.Automation.csproj" />

@@ -1773,7 +1773,7 @@ It runs against `InMemoryAttemptJournal` in Phase 4, and unchanged against Postg
    - [x] D1–D7 approved (2026-11-12) and recorded (ADR-037 to ADR-043); sink rules accepted and recorded (ADR-044).
    - [x] Round 2–9 decisions recorded (ADR-045 to ADR-060); final approval granted 2026-11-15.
 2. [x] The five pure policy types moved to Application; runtime enforcement unchanged in Automation; all 508 Phase 3 tests green after the move. (Step 1, 2026-11-15: two consecutive green container runs, 523/523 including 15 new architecture tests.)
-3. [ ] Phase 3 extensions are additive. (Step 2 implemented and verified 2026-11-15: all items below except the horizon races H1–H4, which need the `RepeatSafetyEvaluator` and are delivered with step 6. The Windows identity path is implemented but verified only on Linux in the container; Windows verification is pending. Step 2 follow-up after the read-only audit of `e253a65`:
+3. [ ] Phase 3 extensions are additive. (Step 2 implemented and verified 2026-11-15; the horizon races H1–H4 were delivered with step 6 (ADR-064: real proxy and barrier, scaled times, H3 as 24 concurrent real races plus 1,000 model races). The Windows identity path is implemented but verified only on Linux in the container; Windows verification is pending. Step 2 follow-up after the read-only audit of `e253a65`:
    - **D1:** upstream sockets are always closed abortively;
    - **D2:** with an explicit deadline the failure screenshot is skipped or bounded by the remaining budget;
    - **D3:** XPath is rejected for row-child selectors because it can escape the row.
@@ -1805,14 +1805,14 @@ It runs against `InMemoryAttemptJournal` in Phase 4, and unchanged against Postg
 7. [ ] (Step 4: template compiler, reference/sink checker, run-time resolver, URL grammar/encoder/final validation, canonical origins, parameter binding and `RecordValidator` implemented and tested, ADR-062; applied to every action config in step 5.) Variables for `record` / `steps` / `operation` / `params` / `secret` with static checking; URL values encoded by context; dot segments, empty path values and unsafe values rejected; url parameters canonicalized; final URL validated on `AbsoluteUri`; the record can never control scheme, host or port.
 8. [ ] Sink rules enforced at validation and run time; sensitive extracts redacted and masked; results bounded and never sensitive; sensitive values never in logs, results, step records, journal entries or errors. Universal secret detection is **not** claimed.
 9. [x] `urlMatches` / `wait.url` glob implemented without regex, with the documented semantics and rejected characters. (Step 4; Playwright-identical `**` semantics per ADR-062. The real-browser corpus comparison with `wait.url` runs in step 9.)
-10. [ ] Exactly one terminal outcome per attempt; explicit finalization on every path; refusals are not attempts; reconciliation findings distinct from attempt outcomes and record resolution.
-11. [ ] Repeat safety:
+10. [ ] (Step 5: explicit finalization on every path is enforced by the validator; the run-time outcome rules are step 7.) Exactly one terminal outcome per attempt; explicit finalization on every path; refusals are not attempts; reconciliation findings distinct from attempt outcomes and record resolution.
+11. [ ] (Step 6: `RepeatSafetyEvaluator` S0–N4 with E1–E42 and the E33 property test, and the guard `Admits`; reconcileMatch evaluation and the executor guard wiring are step 7.) Repeat safety:
     - reconcile attempts never run main steps;
     - `reconcileMatch` matches exactly and turns ambiguity into NeedsReview;
     - `NotFound` never authorizes a repeat by itself;
     - `RepeatSafetyEvaluator` implements rules S0–N4 with the default NeedsReview;
     - the executor guard refuses unauthorized repeats before any browser session exists.
-12. [ ] Attempt journal contract:
+12. [ ] (Step 6: contract, fence sources, late completion, `ConfirmFenceAsync` evidence validation, test-only in-memory journal, fault-injecting journals, fake supervisor and the shared conformance suite incl. F7–F12, F14, F15 and J2/J3/J5 at journal level; executor integration J1–J11 is step 7.) Attempt journal contract:
     - one in-flight attempt per operation, **including unfenced attempts**;
     - a durable, fenced, lease-margin-checked side-effect checkpoint before every side-effect handler;
     - abandoned attempts judged by their checkpoint;
@@ -1822,7 +1822,7 @@ It runs against `InMemoryAttemptJournal` in Phase 4, and unchanged against Postg
     - evidence bound to operation id and definition snapshot;
     - the shared conformance suite green against the in-memory journal;
     - no production `IAttemptJournal` implementation in Phase 4.
-12a. [ ] Authoritative reconciliation requires an `authority` block (target commit-latency contract); latency is measured from the dispatch horizon; validator rejects authoritative without it.
+12a. [x] (Validator: step 3; latency from the dispatch horizon: step 6, E18–E20, E28, E39, E41, H1–H4.) Authoritative reconciliation requires an `authority` block (target commit-latency contract); latency is measured from the dispatch horizon; validator rejects authoritative without it.
 13. [ ] Errors classified with category and transience; after a side effect only declared permanent business outcomes give `Failed`, everything else gives `Indeterminate`; uploads checked for size, extension, content type and signature before the checkpoint.
 14. [ ] Executor runs one attempt per call with a fresh Phase 3 session that is always disposed; request/result/evidence/journal contracts ready for Phase 5.
 15. [ ] Immutability: deterministic canonicalization with golden values; hash verified at publish, load and execution; `WorkflowVersion` lifecycle; schemaVersion dispatch.
