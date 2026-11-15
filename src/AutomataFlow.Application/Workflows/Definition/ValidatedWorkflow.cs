@@ -19,15 +19,19 @@ namespace AutomataFlow.Application.Workflows.Definition;
 /// </summary>
 public sealed class ValidatedWorkflow
 {
-    private ValidatedWorkflow(WorkflowDefinition definition, ImmutableArray<byte> canonicalUtf8, string definitionHash, ImmutableArray<ValidationError> warnings)
+    private ValidatedWorkflow(WorkflowDefinition definition, ImmutableArray<byte> canonicalUtf8, string definitionHash, ImmutableArray<ValidationError> warnings, WorkflowSafetyProfile safety)
     {
         Definition = definition;
         CanonicalUtf8 = canonicalUtf8;
         DefinitionHash = definitionHash;
         Warnings = warnings;
+        Safety = safety;
     }
 
     public WorkflowDefinition Definition { get; }
+
+    /// <summary>Static safety properties computed once (side effects, idempotency attestation, operation id sent, downloads).</summary>
+    public WorkflowSafetyProfile Safety { get; }
 
     public int SchemaVersion => Definition.SchemaVersion;
 
@@ -131,7 +135,7 @@ public sealed class ValidatedWorkflow
         }
 
         var semantic = new DiagnosticBag();
-        WorkflowSemanticValidator.Validate(bound.Definition!, semantic);
+        var profile = WorkflowSemanticValidator.Validate(bound.Definition!, semantic);
         if (!semantic.IsValid)
         {
             return WorkflowValidationResult.Failure(semantic.Errors);
@@ -145,7 +149,7 @@ public sealed class ValidatedWorkflow
                 "The definition does not match its recorded hash."));
         }
 
-        return WorkflowValidationResult.Success(new ValidatedWorkflow(bound.Definition!, ImmutableArray.Create(canonical), hash, [.. bound.Warnings, .. semantic.Warnings]));
+        return WorkflowValidationResult.Success(new ValidatedWorkflow(bound.Definition!, ImmutableArray.Create(canonical), hash, [.. bound.Warnings, .. semantic.Warnings], profile));
     }
 }
 

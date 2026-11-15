@@ -161,11 +161,8 @@ public class Step3FollowUpTests
     [InlineData("Regex")]
     public void Result_field_names_are_data_and_may_use_any_name(string fieldName)
     {
-        Valid(With(r => FirstStep(r)["config"] = new JsonObject { ["fields"] = new JsonObject { [fieldName] = "x" } }));
-        Valid(With(Full, r => r["reconcile"]![0]!["config"] = new JsonObject
-        {
-            ["fields"] = new JsonObject { [fieldName] = new JsonObject { ["attribute"] = "data-id" } },
-        }));
+        Valid(With(r => FirstStep(r)["config"]!["fields"] = new JsonObject { [fieldName] = "x" }));
+        Valid(With(Full, r => r["reconcile"]![0]!["config"]!["fields"] = new JsonObject { [fieldName] = new JsonObject { ["attribute"] = "data-id" } }));
     }
 
     [Theory]
@@ -181,21 +178,22 @@ public class Step3FollowUpTests
     public void Constructs_inside_data_map_values_are_still_rejected()
     {
         AssertRejected(
-            With(Full, r => r["reconcile"]![0]!["config"] = new JsonObject
-            {
-                ["fields"] = new JsonObject { ["id"] = new JsonObject { ["regex"] = "\\d+" } },
-            }),
+            With(Full, r => r["reconcile"]![0]!["config"]!["fields"] = new JsonObject { ["id"] = new JsonObject { ["regex"] = "\\d+" } }),
             "$.reconcile[0].config.fields.id.regex",
             WorkflowErrorCodes.ForbiddenConstruct);
     }
 
+    /// <summary>Since step 5 every action config is a closed schema: other actions have no data map at all.</summary>
     [Fact]
     public void A_fields_map_of_other_actions_is_not_exempt()
     {
-        AssertRejected(
-            With(r => FirstStep(r)["type"] = "extract").Replace("\"config\":{}", "\"config\":{\"fields\":{\"loop\":1}}", StringComparison.Ordinal),
-            "$.steps[0].config.fields.loop",
-            WorkflowErrorCodes.ForbiddenConstruct);
+        var extract = With(r => r["steps"] = new JsonArray(
+            new JsonObject { ["id"] = "read", ["type"] = "extract", ["config"] = new JsonObject { ["selector"] = new JsonObject { ["testId"] = "x" }, ["source"] = "text", ["fields"] = new JsonObject { ["loop"] = 1 } } },
+            Terminal()));
+        AssertRejected(extract, "$.steps[0].config.fields", WorkflowErrorCodes.UnknownProperty);
+
+        var loop = extract.Replace("\"fields\":{\"loop\":1}", "\"loop\":1", StringComparison.Ordinal);
+        AssertRejected(loop, "$.steps[0].config.loop", WorkflowErrorCodes.ForbiddenConstruct);
     }
 
     // ----- L5: escaped, unambiguous, bounded diagnostics -----

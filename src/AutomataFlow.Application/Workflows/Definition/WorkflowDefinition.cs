@@ -53,6 +53,24 @@ public sealed class WorkflowDefinition
     public ImmutableArray<WorkflowStep> Reconcile { get; internal init; } = [];
 
     public ImmutableArray<WorkflowStep> Steps { get; internal init; } = [];
+
+    /// <summary>Every step in every section, including the steps inside condition branches (depth first, in order).</summary>
+    public IEnumerable<WorkflowStep> AllSteps() => Flatten(Setup).Concat(Flatten(Reconcile)).Concat(Flatten(Steps));
+
+    private static IEnumerable<WorkflowStep> Flatten(IEnumerable<WorkflowStep> steps)
+    {
+        foreach (var step in steps)
+        {
+            yield return step;
+            if (step.Action is Actions.ConditionConfig condition)
+            {
+                foreach (var nested in Flatten(condition.Then).Concat(Flatten(condition.Else)))
+                {
+                    yield return nested;
+                }
+            }
+        }
+    }
 }
 
 /// <summary>JSON names: <c>url</c>, <c>string</c> (see <see cref="WorkflowJsonNames.ParameterTypes"/>).</summary>
@@ -202,10 +220,16 @@ public sealed class WorkflowStep
     public ActionType Type { get; internal init; }
 
     /// <summary>
-    /// The action-specific configuration as an immutable, strictly parsed JSON object. Typed per action by the action
-    /// catalog in implementation step 5; in step 3 it is only required to be an object free of loop and regex keys.
+    /// The action-specific configuration exactly as written (immutable, strictly parsed JSON; part of the hashed tree).
+    /// Its typed form is <see cref="Action"/>.
     /// </summary>
     public JObject Config { get; internal init; } = null!;
+
+    /// <summary>The typed, strictly parsed configuration (one sealed class per action, §2).</summary>
+    public Actions.ActionConfig Action { get; internal init; } = null!;
+
+    /// <summary>The step's JSON path, used for diagnostics.</summary>
+    internal string Path { get; init; } = string.Empty;
 
     public int? TimeoutMs { get; internal init; }
 

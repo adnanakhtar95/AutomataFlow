@@ -17,7 +17,7 @@ public class WorkflowDefinitionSourceTests
     {
         var folders = Directory.EnumerateDirectories(DefinitionSource).Select(Path.GetFileName).ToHashSet(StringComparer.Ordinal);
 
-        Assert.Superset(new HashSet<string?>(["Definition", "Templates", "Urls", "Records", "Binding"], StringComparer.Ordinal), folders);
+        Assert.Superset(new HashSet<string?>(["Definition", "Templates", "Urls", "Records", "Binding", "Actions"], StringComparer.Ordinal), folders);
     }
 
     [Theory]

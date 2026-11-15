@@ -275,7 +275,7 @@ public class RecordAndBindingTests
     [InlineData("{{params.crmBaseUrl}}")]
     public void Valid_allowed_hosts_are_accepted(string entry)
     {
-        Valid(With(Full, r => r["allowedHosts"] = new JsonArray(entry)));
+        Valid(With(Full, r => r["allowedHosts"] = entry == "{{params.crmBaseUrl}}" ? new JsonArray(entry) : new JsonArray(entry, "{{params.crmBaseUrl}}")));
     }
 
     [Theory]

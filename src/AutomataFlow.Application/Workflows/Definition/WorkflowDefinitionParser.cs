@@ -92,7 +92,7 @@ public static class WorkflowErrorCodes
 }
 
 /// <summary>The schemaVersion 1 binder. Collects every error (with its JSON path) instead of stopping at the first.</summary>
-internal sealed class SchemaV1Binder
+internal sealed partial class SchemaV1Binder
 {
     private static readonly string[] TopLevelProperties =
     [
@@ -106,6 +106,9 @@ internal sealed class SchemaV1Binder
 
     private readonly DiagnosticBag _errors = new();
     private readonly Dictionary<string, string> _stepIds = new(StringComparer.Ordinal);
+    private int? _stepTimeoutCeilingMs;
+    private int _stepCount;
+    private bool _stepLimitReported;
 
     public DefinitionBindResult Bind(JObject root)
     {
@@ -137,8 +140,8 @@ internal sealed class SchemaV1Binder
             _errors.Add("$.reconcile", WorkflowErrorCodes.MissingDependency, "'reconcile' is required when 'reconciliation' is present.");
         }
 
-        int? stepTimeoutCeilingMs = timeoutValid ? effectiveTimeoutSeconds * 1_000 : null;
-        var (setup, reconcile, steps) = ReadSections(root, stepTimeoutCeilingMs);
+        _stepTimeoutCeilingMs = timeoutValid ? effectiveTimeoutSeconds * 1_000 : null;
+        var (setup, reconcile, steps) = ReadSections(root);
 
         if (!_errors.IsValid)
         {
@@ -373,7 +376,7 @@ internal sealed class SchemaV1Binder
 
     // ----- Steps -----
 
-    private (ImmutableArray<WorkflowStep> Setup, ImmutableArray<WorkflowStep> Reconcile, ImmutableArray<WorkflowStep> Steps) ReadSections(JObject root, int? stepTimeoutCeilingMs)
+    private (ImmutableArray<WorkflowStep> Setup, ImmutableArray<WorkflowStep> Reconcile, ImmutableArray<WorkflowStep> Steps) ReadSections(JObject root)
     {
         var total = 0;
         foreach (var section in (ReadOnlySpan<string>)["setup", "reconcile", "steps"])
@@ -392,13 +395,28 @@ internal sealed class SchemaV1Binder
         }
 
         ImmutableArray<WorkflowStep> ReadSection(string name, bool required) =>
-            ReadList(root, "$", name, required, 0, WorkflowLimits.MaxSteps, (node, itemPath) => ReadStep(node, itemPath, stepTimeoutCeilingMs));
+            ReadList(root, "$", name, required, 0, WorkflowLimits.MaxSteps, (node, itemPath) => ReadStep(node, itemPath, depth: 0));
 
         return (ReadSection("setup", required: false), ReadSection("reconcile", required: false), ReadSection("steps", required: true));
     }
 
-    private WorkflowStep? ReadStep(JNode node, string path, int? stepTimeoutCeilingMs)
+    /// <summary>
+    /// Binds one step at branch nesting <paramref name="depth"/> (0 = a section's top level). Every step, including
+    /// those inside condition branches, counts toward <see cref="WorkflowLimits.MaxSteps"/> and shares one id namespace.
+    /// </summary>
+    private WorkflowStep? ReadStep(JNode node, string path, int depth)
     {
+        if (++_stepCount > WorkflowLimits.MaxSteps)
+        {
+            if (!_stepLimitReported)
+            {
+                _stepLimitReported = true;
+                _errors.Add("$", WorkflowErrorCodes.TooManySteps, $"The workflow has more than {WorkflowLimits.MaxSteps} steps (condition branches included).");
+            }
+
+            return null;
+        }
+
         if (!AsObject(node, path, out var obj))
         {
             return null;
@@ -415,6 +433,7 @@ internal sealed class SchemaV1Binder
         var type = ReadEnum(obj, path, "type", required: true, WorkflowJsonNames.ActionTypes);
 
         JObject? config = null;
+        Actions.ActionConfig? action = null;
         if (!obj.TryGet("config", out var configNode))
         {
             _errors.Add(path + ".config", WorkflowErrorCodes.Required, "'config' is required.");
@@ -422,14 +441,17 @@ internal sealed class SchemaV1Binder
         else if (AsObject(configNode, path + ".config", out var configObject))
         {
             config = configObject;
-            RejectForbiddenKeys(configObject, path + ".config", dataMapProperty: type is ActionType.CaptureResult or ActionType.ReconcileMatch ? "fields" : null);
+            if (type is not null)
+            {
+                action = Actions.ActionCatalog.Get(type.Value).Parse(this, configObject, path + ".config", depth);
+            }
         }
 
         var timeoutMs = ReadInt(obj, path, "timeoutMs", required: false, WorkflowLimits.MinStepTimeoutMs, WorkflowLimits.MaxStepTimeoutMs);
-        if (timeoutMs is not null && stepTimeoutCeilingMs is not null && timeoutMs > stepTimeoutCeilingMs)
+        if (timeoutMs is not null && _stepTimeoutCeilingMs is not null && timeoutMs > _stepTimeoutCeilingMs)
         {
             _errors.Add(path + ".timeoutMs", WorkflowErrorCodes.ExceedsWorkflowTimeout,
-                $"'timeoutMs' ({timeoutMs}) cannot exceed the workflow timeout ({stepTimeoutCeilingMs} ms).");
+                $"'timeoutMs' ({timeoutMs}) cannot exceed the workflow timeout ({_stepTimeoutCeilingMs} ms).");
         }
 
         var onError = ReadEnum(obj, path, "onError", required: false, WorkflowJsonNames.ErrorModes);
@@ -437,7 +459,7 @@ internal sealed class SchemaV1Binder
         var idempotency = obj.TryGet("idempotency", out var idempotencyNode) ? ReadIdempotency(idempotencyNode, path + ".idempotency") : null;
         var description = ReadText(obj, path, "description", WorkflowLimits.MaxDescriptionChars);
 
-        if (id is null || type is null || config is null)
+        if (id is null || type is null || config is null || action is null)
         {
             return null;
         }
@@ -447,11 +469,13 @@ internal sealed class SchemaV1Binder
             Id = id,
             Type = type.Value,
             Config = config,
+            Action = action,
             TimeoutMs = timeoutMs,
             OnError = onError ?? SchemaV1Defaults.OnError,
             SideEffect = sideEffect,
             Idempotency = idempotency,
             Description = description,
+            Path = path,
         };
     }
 
@@ -472,61 +496,6 @@ internal sealed class SchemaV1Binder
 
         var guarantee = ReadEnum(obj, path, "guarantee", required: true, WorkflowJsonNames.Guarantees);
         return key is null || guarantee is null ? null : new IdempotencyAttestation { Key = key, Guarantee = guarantee.Value };
-    }
-
-    /// <summary>
-    /// Rejects loop and regex constructs inside a raw <c>config</c> (§16 D6). The keys of an author-named data map
-    /// (<paramref name="dataMapProperty"/>, e.g. result <c>fields</c>) are data, not constructs, so they are not checked;
-    /// their values are. Matching is case-insensitive. The path is formatted only for an error (ADR-061).
-    /// </summary>
-    private void RejectForbiddenKeys(JObject config, string configPath, string? dataMapProperty)
-    {
-        var segments = new List<(string? Name, int Index)>();
-        Scan(config, isDataMap: false);
-
-        void Scan(JNode node, bool isDataMap)
-        {
-            switch (node)
-            {
-                case JObject obj:
-                    foreach (var property in obj.Properties)
-                    {
-                        segments.Add((property.Key, -1));
-                        if (!isDataMap && IsForbiddenKey(property.Key))
-                        {
-                            _errors.Add(FormatPath(), WorkflowErrorCodes.ForbiddenConstruct,
-                                $"'{DiagnosticPath.Escape(property.Key)}' is not supported: schemaVersion 1 has no loops and no regular expressions.");
-                        }
-
-                        var childIsDataMap = segments.Count == 1 && dataMapProperty is not null
-                            && string.Equals(property.Key, dataMapProperty, StringComparison.Ordinal);
-                        Scan(property.Value, childIsDataMap);
-                        segments.RemoveAt(segments.Count - 1);
-                    }
-
-                    break;
-                case JArray array:
-                    for (var i = 0; i < array.Items.Length; i++)
-                    {
-                        segments.Add((null, i));
-                        Scan(array.Items[i], isDataMap: false);
-                        segments.RemoveAt(segments.Count - 1);
-                    }
-
-                    break;
-            }
-        }
-
-        string FormatPath()
-        {
-            var path = configPath;
-            foreach (var (name, index) in segments)
-            {
-                path = name is null ? DiagnosticPath.Index(path, index) : DiagnosticPath.Property(path, name);
-            }
-
-            return path;
-        }
     }
 
     private static bool IsForbiddenKey(string key)

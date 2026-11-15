@@ -87,4 +87,12 @@ public static class WorkflowLimits
     public const int MinReconcileMaxRows = 1;
     public const int MaxReconcileMaxRows = 50;
     public const int MaxAcceptStatuses = 10;
+    public const int MinAcceptStatus = 400;
+    public const int MaxAcceptStatus = 599;
+    public const int MaxAttributeNameChars = 100;
+    public const int MaxScreenshotLabelChars = 100;
+    public const int MaxSelectIndex = 1_000;
+    public const int MaxElementCount = 1_000;
+    public const int MaxResultFieldNameChars = 64;
+    public const int MaxOutcomeCodeChars = 64;
 }

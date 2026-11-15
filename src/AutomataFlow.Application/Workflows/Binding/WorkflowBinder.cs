@@ -18,6 +18,15 @@ public sealed class BindingOptions
 
     /// <summary>Server <c>Automation:Browser:Timeouts:SessionSeconds</c>; a workflow's <c>timeoutSeconds</c> may not exceed it.</summary>
     public int MaxSessionSeconds { get; init; } = 300;
+
+    /// <summary>
+    /// Server-permitted upload extensions (§5.4). An upload step's <c>allowedExtensions</c> must be a subset. The default
+    /// is the set the engine can verify by content sniffing; executables and scripts are never permitted (authoring rule).
+    /// </summary>
+    public IReadOnlyCollection<string> UploadAllowedExtensions { get; init; } = [".pdf", ".png", ".jpg", ".jpeg", ".docx", ".xlsx", ".csv", ".txt"];
+
+    /// <summary>Server <c>Uploads.MaxBytes</c>; an upload step's <c>maxBytes</c> may not exceed it.</summary>
+    public long MaxUploadBytes { get; init; } = 10L * 1024 * 1024;
 }
 
 /// <summary>The result of binding a workflow to job parameters (§6.2 step 2).</summary>
@@ -76,6 +85,8 @@ public static class WorkflowBinder
             errors.Add(new ValidationError("$.timeoutSeconds", EngineErrorCodes.WorkflowTimeoutExceedsServerLimit,
                 $"timeoutSeconds ({definition.TimeoutSeconds}) exceeds the server session limit ({options.MaxSessionSeconds})."));
         }
+
+        CheckUploads(definition, options, errors);
 
         var declared = definition.Parameters.ToDictionary(p => p.Name, p => p.Type, StringComparer.Ordinal);
         foreach (var name in parameters.Keys)
@@ -145,6 +156,27 @@ public static class WorkflowBinder
         }
 
         return (new BoundWorkflow(text.ToImmutable(), urls.ToImmutable(), new EgressPolicy(rules)), []);
+    }
+
+    private static void CheckUploads(WorkflowDefinition definition, BindingOptions options, ImmutableArray<ValidationError>.Builder errors)
+    {
+        foreach (var step in definition.AllSteps())
+        {
+            if (step.Action is not Actions.UploadConfig upload)
+            {
+                continue;
+            }
+
+            foreach (var extension in upload.AllowedExtensions.Where(e => !options.UploadAllowedExtensions.Contains(e, StringComparer.Ordinal)))
+            {
+                errors.Add(new ValidationError(step.Path + ".config.allowedExtensions", "upload-extension-not-permitted", $"The server does not permit uploading '{extension}' files."));
+            }
+
+            if (upload.MaxBytes > options.MaxUploadBytes)
+            {
+                errors.Add(new ValidationError(step.Path + ".config.maxBytes", "upload-max-bytes-exceeds-server", $"maxBytes exceeds the server limit ({options.MaxUploadBytes})."));
+            }
+        }
     }
 
     /// <summary>Canonical trusted origins; empty outside Development, so the flag can never be set there.</summary>

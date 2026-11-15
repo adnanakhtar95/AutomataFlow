@@ -39,7 +39,7 @@ public class ValidatedWorkflowTests
     public void A_semantic_change_under_an_old_hash_is_refused_as_tampered()
     {
         var stored = Valid(Full);
-        var tampered = With(Full, r => r["allowedHosts"] = new JsonArray("https://attacker.example.test"));
+        var tampered = With(Full, r => r["allowedHosts"] = new JsonArray("{{params.crmBaseUrl}}", "https://attacker.example.test"));
 
         var result = ValidatedWorkflow.Load(tampered, stored.DefinitionHash);
 
@@ -85,7 +85,7 @@ public class ValidatedWorkflowTests
         Minimal.Replace("\"schemaVersion\":1", "\"schemaVersion\":2", StringComparison.Ordinal),
         Minimal.Replace("\"name\":\"minimal-flow\",", string.Empty, StringComparison.Ordinal),
         Minimal.Replace("\"type\":\"captureResult\"", "\"type\":\"javascript\"", StringComparison.Ordinal),
-        Minimal.Replace("\"config\":{}", "\"config\":{\"loop\":{}}", StringComparison.Ordinal),
+        Minimal.Replace("\"config\":{\"outcome\"", "\"config\":{\"loop\":{},\"outcome\"", StringComparison.Ordinal),
         Minimal.Replace("{\"schemaVersion\"", "{\"x\":1,\"schemaVersion\"", StringComparison.Ordinal),
         "[" + Minimal + "]",
     };

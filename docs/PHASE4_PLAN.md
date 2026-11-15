@@ -225,6 +225,8 @@ Every step additionally exposes `steps.<id>.failed` (`true`/`false`; §9).
 
 **Why `onError: continue` is restricted (ADR-053):** `navigate`, `click`, `upload` and `download` start browser-side work (a navigation, a form POST, a file transfer) that can still complete **after** the step's timeout has fired. Continuing would let later steps act on a page that is still changing underneath them. Only actions that read, type into or wait on the current page may continue.
 
+**Implementation note (ADR-063):** descriptors parse the strictly parsed immutable `JObject` that is also hashed (not a `JsonElement`), and the typed config is exposed as `WorkflowStep.Action`.
+
 ```csharp
 // Application (no packages)
 public sealed record ActionDescriptor(
@@ -1793,13 +1795,13 @@ It runs against `InMemoryAttemptJournal` in Phase 4, and unchanged against Postg
    **Hash semantics:** the hash covers the definition as written after parsing, so an explicit default such as `"timeoutSeconds": 120` is a different definition from an omitted one, while formatting, property order and escaping are not.
 
    **Audit follow-up (ADR-061):** M1 lazy diagnostic paths (allocation-bounded worst case); M2 `CreateForPublication` / `Load(json, recordedHash)`; M3 frozen `SchemaV1Defaults`; L1 loop/regex keys rejected only as constructs; L2 `VerifyAgainst`; L3 one hash-format definition; L4 schema-version consistency and timestamp ordering in `WorkflowVersion`; L5 escaped paths and at most 100 errors; L6 ADR-061.)
-5. [ ] Hand-written validator covers, recursively for nested branches:
+5. [x] (Step 5, ADR-063: all items below implemented with unit tests; the URL/template components come from step 4.) Hand-written validator covers, recursively for nested branches:
    - structure and all 13 action configs;
    - templates, dominance, URL grammar and canonical origins, sink rules, parameters;
    - explicit `sideEffect` declarations, side-effect placement and timeouts;
    - idempotency attestation and reconciliation structure and keys;
    - explicit finalization and terminal-outcome rules.
-6. [ ] `ActionCatalog` (Application) ↔ handlers (Automation) 1:1, verified at startup and by tests; the Api uses only Application.
+6. [ ] `ActionCatalog` (Application) ↔ handlers (Automation) 1:1, verified at startup and by tests; the Api uses only Application. (Step 5: catalog with exactly one descriptor per action type; the handler side and registry check are step 7.)
 7. [ ] (Step 4: template compiler, reference/sink checker, run-time resolver, URL grammar/encoder/final validation, canonical origins, parameter binding and `RecordValidator` implemented and tested, ADR-062; applied to every action config in step 5.) Variables for `record` / `steps` / `operation` / `params` / `secret` with static checking; URL values encoded by context; dot segments, empty path values and unsafe values rejected; url parameters canonicalized; final URL validated on `AbsoluteUri`; the record can never control scheme, host or port.
 8. [ ] Sink rules enforced at validation and run time; sensitive extracts redacted and masked; results bounded and never sensitive; sensitive values never in logs, results, step records, journal entries or errors. Universal secret detection is **not** claimed.
 9. [x] `urlMatches` / `wait.url` glob implemented without regex, with the documented semantics and rejected characters. (Step 4; Playwright-identical `**` semantics per ADR-062. The real-browser corpus comparison with `wait.url` runs in step 9.)

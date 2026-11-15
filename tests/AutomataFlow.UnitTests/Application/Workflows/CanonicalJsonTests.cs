@@ -57,12 +57,24 @@ public class CanonicalJsonTests
     [Fact]
     public void Golden_canonical_bytes_and_hash()
     {
-        var workflow = WorkflowJson.Valid(GoldenInput);
+        // The golden input exercises the canonical form (odd keys, escapes, control characters) and is deliberately not a
+        // valid workflow since step 5 typed every action config; ValidatedWorkflow uses exactly this canonicalizer
+        // (see ValidatedWorkflowTests and A_validated_workflow_hashes_its_canonical_bytes below).
+        var canonical = Canonical(GoldenInput);
 
-        Assert.Equal(567, workflow.CanonicalUtf8.Length);
-        Assert.Equal(GoldenCanonical, workflow.CanonicalJson);
-        Assert.Equal(Encoding.UTF8.GetBytes(GoldenCanonical), workflow.CanonicalUtf8.ToArray());
-        Assert.Equal(GoldenHash, workflow.DefinitionHash);
+        Assert.Equal(567, canonical.Length);
+        Assert.Equal(GoldenCanonical, Encoding.UTF8.GetString(canonical));
+        Assert.Equal(Encoding.UTF8.GetBytes(GoldenCanonical), canonical);
+        Assert.Equal(GoldenHash, CanonicalJson.ComputeHash(canonical));
+    }
+
+    [Fact]
+    public void A_validated_workflow_hashes_exactly_its_canonical_bytes()
+    {
+        var workflow = WorkflowJson.Valid(WorkflowJson.Full);
+
+        Assert.Equal(Canonical(WorkflowJson.Full), workflow.CanonicalUtf8.ToArray());
+        Assert.Equal(CanonicalJson.ComputeHash(Canonical(WorkflowJson.Full)), workflow.DefinitionHash);
     }
 
     [Fact]
@@ -119,7 +131,7 @@ public class CanonicalJsonTests
         var pretty = WorkflowJson.Valid(
             """
             {
-              "steps": [ { "config": { }, "type": "captureResult", "id": "done" } ],
+              "steps": [ { "config": { "outcome": { "status": "succeeded" } }, "type": "captureResult", "id": "done" } ],
               "allowedHosts": [ "https://crm.example.test" ],
               "name": "minimal-flow",
               "schemaVersion": 1
@@ -131,11 +143,11 @@ public class CanonicalJsonTests
     }
 
     [Theory]
-    [InlineData("""{"schemaVersion":1,"name":"minimal-flow","allowedHosts":["https://crm.example.test"],"steps":[{"id":"done","type":"captureResult","config":{"x":1}}]}""")]
-    [InlineData("""{"schemaVersion":1,"name":"minimal-flox","allowedHosts":["https://crm.example.test"],"steps":[{"id":"done","type":"captureResult","config":{}}]}""")]
-    [InlineData("""{"schemaVersion":1,"name":"minimal-flow","allowedHosts":["https://crm.example.test"],"steps":[{"id":"done","type":"captureResult","config":{}}],"description":"x"}""")]
-    [InlineData("""{"schemaVersion":1,"name":"minimal-flow","allowedHosts":["https://crm.example.test"],"steps":[{"id":"a","type":"delay","config":{}},{"id":"done","type":"captureResult","config":{}}]}""")]
-    [InlineData("""{"schemaVersion":1,"name":"minimal-flow","allowedHosts":["https://crm.example.test"],"steps":[{"id":"done","type":"captureResult","config":{}}],"timeoutSeconds":120}""")]
+    [InlineData("""{"schemaVersion":1,"name":"minimal-flow","allowedHosts":["https://crm.example.test"],"steps":[{"id":"done","type":"captureResult","config":{"outcome":{"status":"failed","code":"Rejected"}}}]}""")]
+    [InlineData("""{"schemaVersion":1,"name":"minimal-flox","allowedHosts":["https://crm.example.test"],"steps":[{"id":"done","type":"captureResult","config":{"outcome":{"status":"succeeded"}}}]}""")]
+    [InlineData("""{"schemaVersion":1,"name":"minimal-flow","allowedHosts":["https://crm.example.test"],"steps":[{"id":"done","type":"captureResult","config":{"outcome":{"status":"succeeded"}}}],"description":"x"}""")]
+    [InlineData("""{"schemaVersion":1,"name":"minimal-flow","allowedHosts":["https://crm.example.test"],"steps":[{"id":"a","type":"delay","config":{"milliseconds":1}},{"id":"done","type":"captureResult","config":{"outcome":{"status":"succeeded"}}}]}""")]
+    [InlineData("""{"schemaVersion":1,"name":"minimal-flow","allowedHosts":["https://crm.example.test"],"steps":[{"id":"done","type":"captureResult","config":{"outcome":{"status":"succeeded"}}}],"timeoutSeconds":120}""")]
     public void Any_semantic_change_changes_the_hash(string changed)
     {
         // The last case is the documented decision: the hash covers the definition as written, so an explicit default

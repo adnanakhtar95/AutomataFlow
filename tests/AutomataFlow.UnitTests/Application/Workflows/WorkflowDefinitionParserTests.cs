@@ -33,7 +33,10 @@ public class WorkflowDefinitionParserTests
         var step = Assert.Single(definition.Steps);
         Assert.Equal("done", step.Id);
         Assert.Equal(ActionType.CaptureResult, step.Type);
-        Assert.Empty(step.Config.Properties);
+        Assert.Equal("outcome", Assert.Single(step.Config.Properties).Key);
+        var capture = Assert.IsType<AutomataFlow.Application.Workflows.Actions.CaptureResultConfig>(step.Action);
+        Assert.True(capture.IsTerminal);
+        Assert.Empty(capture.Fields);
         Assert.Null(step.TimeoutMs);
         Assert.Equal(StepErrorMode.Fail, step.OnError);
         Assert.Null(step.SideEffect);
@@ -81,7 +84,7 @@ public class WorkflowDefinitionParserTests
         Assert.Equal("Fictional CRM runbook 4.2: synchronous commit", reconciliation.Authority.ContractReference);
         Assert.Equal(SchemaV1Defaults.MaxEvidenceAgeSeconds, reconciliation.Authority.MaxEvidenceAgeSeconds);
 
-        Assert.Equal("login", Assert.Single(definition.Setup).Id);
+        Assert.Equal(["login", "op"], definition.Setup.Select(s => s.Id));
         Assert.Equal(ActionType.Navigate, definition.Setup[0].Type);
         Assert.Equal("Open the login page", definition.Setup[0].Description);
         Assert.True(definition.HasReconcileSection);
@@ -100,12 +103,9 @@ public class WorkflowDefinitionParserTests
     [Fact]
     public void Every_action_type_name_binds()
     {
-        foreach (var (name, type) in WorkflowJsonNames.ActionTypes)
-        {
-            var json = With(root => root["steps"] = new JsonArray(Step("s", name)));
-
-            Assert.Equal(type, Valid(json).Definition.Steps[0].Type);
-        }
+        // The kitchen-sink definition places every action type in a valid position; each binds to its type.
+        var bound = Valid(KitchenSink).Definition.AllSteps().Select(s => s.Type).ToHashSet();
+        Assert.Equal(Enum.GetValues<ActionType>().ToHashSet(), bound);
 
         Assert.Equal(13, WorkflowJsonNames.ActionTypes.Length);
         Assert.Equal(Enum.GetValues<ActionType>().Order(), WorkflowJsonNames.ActionTypes.Select(p => p.Value).Order());
@@ -209,7 +209,18 @@ public class WorkflowDefinitionParserTests
         AssertRejected(With(r => r[key] = new JsonObject()), "$." + key, WorkflowErrorCodes.ForbiddenConstruct);
         AssertRejected(With(r => FirstStep(r)[key] = true), "$.steps[0]." + key, WorkflowErrorCodes.ForbiddenConstruct);
         AssertRejected(
-            With(r => FirstStep(r)["config"] = new JsonObject { ["if"] = new JsonObject { ["all"] = new JsonArray(new JsonObject { [key] = "x" }) } }),
+            With(r => r["steps"] = new JsonArray(
+                new JsonObject
+                {
+                    ["id"] = "check",
+                    ["type"] = "condition",
+                    ["config"] = new JsonObject
+                    {
+                        ["if"] = new JsonObject { ["all"] = new JsonArray(new JsonObject { [key] = "x" }) },
+                        ["then"] = new JsonArray(Step("inner")),
+                    },
+                },
+                Terminal())),
             "$.steps[0].config.if.all[0]." + key,
             WorkflowErrorCodes.ForbiddenConstruct);
     }
@@ -587,15 +598,15 @@ public class WorkflowDefinitionParserTests
     {
         Valid(With(r =>
         {
-            r["setup"] = Steps(50, "a");
-            r["steps"] = Steps(WorkflowLimits.MaxSteps - 50, "b");
+            r["setup"] = Delays(50, "a");
+            r["steps"] = StepsThenDone(WorkflowLimits.MaxSteps - 50 - 1, "b"); // 50 + 149 + 1 terminal = 200
         }));
 
         AssertRejected(
             With(r =>
             {
-                r["setup"] = Steps(50, "a");
-                r["steps"] = Steps(WorkflowLimits.MaxSteps - 50 + 1, "b");
+                r["setup"] = Delays(50, "a");
+                r["steps"] = StepsThenDone(WorkflowLimits.MaxSteps - 50, "b"); // 201
             }),
             "$",
             WorkflowErrorCodes.TooManySteps);
