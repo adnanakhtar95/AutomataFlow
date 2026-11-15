@@ -182,43 +182,64 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
 - **Gate:** all Phase 3 tests must pass unchanged, apart from namespaces.
 
 ## ADR-038 — Per-step timeouts never terminate the browser session
-**Status:** Accepted (D2). A step's timeout is passed to Playwright as that call's own timeout, so the session survives and `onError: continue` works. Only caller cancellation, the workflow timeout and the session deadline close the session. Also accepted:
-- **Uploads:** content-only (`IExecutionFileProvider`, in-memory payload, never a filesystem path).
-- **Safe page checks:** `CountAsync`, `IsVisibleAsync` and `CurrentUrl`, which are immediate and never throw for missing elements.
+**Status:** Accepted (D2); amended by ADR-053 (review round 4; approved with Phase 4 on 2026-11-15).
+- **Timeouts:** a step's timeout is passed to Playwright through `OperationOptions` as **one total deadline** for the whole step, including composite operations such as `SubmitAsync` (click plus load wait). The session survives. Only caller cancellation, the workflow timeout and the session deadline close the session.
+- **Side-effect steps:** a timeout of a side-effect step ends the attempt `Indeterminate` (ADR-048, ADR-051).
+- **`onError: continue`:** restricted by ADR-053.
+- **Also accepted:**
+  - **Uploads:** content-only (`IExecutionFileProvider`, in-memory payload, never a filesystem path).
+  - **Safe page checks:** `CountAsync`, `IsVisibleAsync`, `CurrentUrl` and the bounded `QueryRowsAsync`, which never throw for missing elements.
 
-## ADR-039 — CaptureResult is the terminal outcome mechanism
-**Status:** Accepted (D3).
-- **Exactly one terminal outcome** per run, set once through a single transition and never overwritten.
-- **Terminal `captureResult`** must be the last step of its sequence.
-- **Outcomes per section:** setup `failed`; reconcile `reconciled` / `notFound` / `needsReview` (mandatory on every path); steps `succeeded` / `failed`.
+## ADR-039 — Exactly one terminal outcome per attempt
+**Status:** Accepted (D3); amended in review rounds 2 and 4 (approved with Phase 4 on 2026-11-15).
+- **Exactly one terminal outcome** per attempt, set once through a single transition and never overwritten. Cleanup and journal-completion failures are diagnostics only.
+- **Refusals are not attempts.** A call refused before admission is never journaled and has no terminal outcome of its own (ADR-049).
+- **Explicit finalization:**
+  - every path through `steps` ends in a terminal `captureResult`, which must be the last step of its sequence;
+  - the `reconcile` section ends in exactly one top-level `reconcileMatch` (ADR-052) and contains no `captureResult`;
+  - there is no implicit success.
+- **Outcomes per section:** setup `captureResult` `failed` only; steps `succeeded` / `failed`; reconcile findings come only from `reconcileMatch`.
 - **Result fields** are written at most once per path. This is enforced statically, with a run-time `ResultOverwrite` backstop.
-- **Reconcile fields** are discarded on `notFound`.
-- **Transient failure after a side effect** is reported as `Indeterminate`, with the declared code kept.
-- **Late cancellation:** a cancellation that arrives after the terminal outcome has been set cannot change it; it only shortens how long session cleanup waits.
-- **Accepted consequence:** after a side effect the engine cannot distinguish "failed before saving" from "saved but the response was lost". Failures that happened before anything was saved (e.g. DemoCrm `+fail-N`) therefore also cost one reconciliation pass before the next attempt. That is cheaper than a duplicate business record.
-- **Full table:** docs/PHASE4_PLAN.md section 16.
+- **After a side effect** only a declared permanent business outcome gives `Failed`; everything else gives `Indeterminate` (ADR-051).
+- **Late cancellation:** a cancellation that arrives after the terminal outcome has been set cannot change it.
+- **Accepted consequence:** after a side effect the engine cannot distinguish "failed before saving" from "saved but the response was lost". Without target-enforced idempotency or authoritative reconciliation evidence, such a record (even DemoCrm `+fail-N`, where nothing was stored) goes to `NeedsReview` instead of being repeated. That is cheaper than a duplicate business record.
+- **Full table:** docs/PHASE4_PLAN.md section 16 D3.
 
-## ADR-040 — Workflow sections: setup, reconcile, steps
-**Status:** Accepted (D4). The order is `setup` → `reconcile` (only when the request asks for it; Phase 5 decides when) → `steps`. Neither `setup` nor `reconcile` may contain side-effect steps.
+## ADR-040 — Workflow sections: setup, then reconcile OR steps
+**Status:** Accepted (D4); amended in review round 2 (no fall-through).
+- **Order:** `setup` runs first in every attempt. Then **either** `reconcile` (a Reconcile attempt) **or** `steps` (a Normal attempt) runs, **never both in one attempt**.
+- **No fall-through:** a reconcile attempt stops after its finding, whatever the finding is; it never continues into main steps.
+- **Who decides:** Phase 5 decides when to run a reconcile attempt, using `RepeatSafetyEvaluator` (ADR-045).
+- **Side effects:** neither `setup` nor `reconcile` may contain side-effect steps.
+- This replaces the earlier wording "setup → reconcile → steps", which implied fall-through.
 
 ## ADR-041 — Workflow version lifecycle and deterministic content hashing
 **Status:** Accepted (D5).
 - **Lifecycle:** Draft → Published → Archived, with no way back. Published and Archived definitions are immutable.
 - **Canonical form** (inspired by RFC 8785):
-  - UTF-8;
-  - properties in ordinal order;
-  - no whitespace;
+  - UTF-8 without BOM;
+  - properties in ordinal UTF-16 order;
+  - no insignificant whitespace;
   - minimal string escaping;
   - integer-only numbers;
   - duplicate keys rejected before canonicalization.
-- **Hash:** SHA-256, lowercase hex, recomputed before execution (`WorkflowTampered` on mismatch). Golden-value tests pin it.
+- **Hash:**
+  - format `sha256:` + lowercase hex;
+  - computed and stored at publish;
+  - verified on load (`ValidatedWorkflow.Create`) and again at execution start (`WorkflowTampered` on mismatch);
+  - recorded in every attempt snapshot (ADR-050);
+  - golden-value tests pin it.
 
 ## ADR-042 — No loops and no regular expressions in workflow schemaVersion 1
 **Status:** Accepted (D6). Both are rejected as unknown constructs. Adding either requires a new schemaVersion and an ADR.
 
 ## ADR-043 — Typed workflow parameters cannot bypass host restrictions
-**Status:** Accepted (D7).
-- **Types:** `url` parameters are origin-only, https-only outside Development and never private IP literals outside Development. They are usable only as the whole prefix of a navigate URL, and only when the same parameter is listed in `allowedHosts`. `string` parameters can never appear in a URL scheme or authority.
+**Status:** Accepted (D7); amended in review round 2 (private network, ADR-047) and round 4 (canonicalization, ADR-046; approved with Phase 4 on 2026-11-15).
+- **`url` parameters:**
+  - origin-only, canonicalized at bind time (lowercase scheme, normalized host, default port and a single trailing `/` removed);
+  - https-only outside Development and never private IP literals outside Development;
+  - usable only as the whole prefix of a navigate URL, and only when the same parameter is listed in `allowedHosts`.
+- **`string` parameters:** 1–200 characters; they can never appear in a URL scheme or authority.
 - **Source:** values come from job configuration, never from records.
 - **Enforcement:** bound URL parameters become `EgressPolicy` rules, and all Phase 3 runtime enforcement then applies unchanged.
 
@@ -230,16 +251,264 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
   - A *sensitive extract* is an `extract` output marked `sensitive: true`.
   - A *sensitive value* is any of these, or any resolved template containing one (taint propagation).
 - **Secrets** are accepted **only** in `fill.value`. They are rejected in every other sink, including `select`, condition operands and selectors, because those would allow probing a secret through page behaviour.
-- **Sensitive inputs and extracts** are accepted in `fill.value`, `select` and condition operands. They are rejected in `navigate.url`, `captureResult.fields`, selector values, `screenshot.label` and `upload.file`.
+- **Sensitive inputs and extracts** are accepted in `fill.value`, `select` and condition operands. They are rejected in `navigate.url`, `captureResult.fields`, `reconcileMatch.equals` and `reconcileMatch.fields`, selector values, `screenshot.label` and `upload.file`.
 - **Where enforced:** by the validator, and again at run time.
-- **Logs** never contain sensitive values. Execution events contain no input or output values at all.
-- **Screenshot masking** covers sensitive fills, the Phase 3 built-ins and declared `maskSelectors`. It does not claim to detect every secret a website displays.
+- **Logs and journal entries** never contain sensitive values. Execution events contain no input or output values at all.
+- **Screenshot masking** covers sensitive fills, sensitive-extract elements, the Phase 3 built-ins and declared `maskSelectors`. It does not claim to detect every secret a website displays.
 - **Full matrix:** docs/PHASE4_PLAN.md section 5.
 
+## Phase 4 review-round decisions (ADR-045 to ADR-060)
+**Status of every ADR in this group:** accepted in direction by the user during review rounds 2–9 (2026-11-12 and 2026-11-15). **Final Phase 4 approval was granted by the user on 2026-11-15; all of them are binding.** ADR-054's scope (DemoCrm may change in Phase 4) was approved explicitly on 2026-11-15. The authoritative text is docs/PHASE4_PLAN.md section 16 (R1–R17; R16 and R17 amended in rounds 8 and 9, R14 in round 9).
+
+## ADR-045 — Repeat authorization: deterministic evaluator and executor guard
+- **No authorization from NotFound alone:** a reconcile `NotFound` finding never authorizes a repeated side effect by itself.
+- **Pure evaluator:** `RepeatSafetyEvaluator` (Application, pure) evaluates an operation's journal history with **first-match precedence**:
+  1. integrity, in flight, unfenced (`AwaitingFence`, ADR-056), empty, resolved;
+  2. if an ambiguity is open: Found → reconcile needs review → permanent failure with open ambiguity → reconcile budget → ambiguity budget (`RepeatSafety:MaxAmbiguousAttempts`, default 3) → target-enforced idempotency → latest NotFound (advisory / key not sent / too early / expired / authoritative) → reconcile next → NeedsReview;
+  3. otherwise: permanent failure, reconciled first, no side effect;
+  4. a **mandatory default `NeedsReview`**.
+- **Ambiguity first:** while an ambiguity is open, resolution and no-side-effect rules are never consulted.
+- **`Allowed` needs evidence:** only `NoPriorAttempt`, `NoSideEffectStarted`, `TargetEnforcedIdempotency` or `AuthoritativeNotFound` can produce `Allowed`.
+- **Executor guard:** the executor refuses a Normal attempt without `Allowed` before any browser session exists.
+- **Rules table:** docs/PHASE4_PLAN.md section 10.5.
+
+## ADR-046 — URL templates, canonical origins, encoding and glob semantics
+- **Grammar:** URL templates follow a grammar with an ASCII literal character set; there are no literal backslashes, whitespace, dot segments or encoded `/`, `\` or `.`.
+- **Placeholders:** allowed only in path segments and query values.
+- **Origins:**
+  - literal origins must be canonical;
+  - `url` parameters are canonicalized at bind time;
+  - the record never controls scheme, host or port.
+- **Encoding:** values are encoded once per context. Dot-segment values, empty path values, control characters and lone surrogates are rejected.
+- **Final URL:** validated on the exact `Uri.AbsoluteUri`, which must round-trip unchanged: same origin, segment-aware literal path prefix, no userinfo or fragment, ≤ 2,048 characters, matches `allowedHosts`.
+- **Glob:** `urlMatches` / `wait.url` use a regex-free glob (`*`, `**`) identical to Playwright's for that subset.
+
+## ADR-047 — Private-network access only from trusted server configuration
+`WorkflowExecutionRequest` has no private-network flag. A rule may allow private-network destinations only in Development, and only when its origin exactly matches `Automation:Browser:DevelopmentPrivateNetworkOrigins`. That server configuration is validated at startup and rejected outside Development. No workflow, job, parameter, record, request or customer can grant private-network access.
+
+## ADR-048 — Additional workflow validation
+- **Side-effect steps:** `timeoutMs` ≥ 5,000; a timeout is ambiguous (`Indeterminate`).
+- **Sensitive extracts:** registered for redaction and masking immediately; never in results, step records, journal entries or logs; `ExtractTooLong` instead of silent truncation.
+- **Results:** at most 50 fields, 2,000 characters each, 32 KB total.
+- **Uploads:**
+  - content-only and organization-scoped;
+  - size, extension subset, content type and signature checks;
+  - all checks run before the side-effect checkpoint.
+- **Nested conditions:** validated recursively with the full section rules.
+- **Hash verification:** at publish, on load and at execution start.
+
+## ADR-049 — Attempt journal, single in-flight attempt and durable side-effect checkpoint
+- **Port:** `IAttemptJournal` (Application) is the **only source of attempt history**. Phase 5 implements it in PostgreSQL; Phase 4 tests use an in-memory implementation that exists only in test projects.
+- **Reservation:** `ReserveAsync` atomically marks lease-expired Started attempts Abandoned, then refuses a new attempt for the same (organization, operation) while another is Reserved, Started or unfenced (ADR-056). All later calls are fenced by the reservation's lease, except a late `CompleteAsync`, which only adds outcome and fence information.
+- **Checkpoint:**
+  - before invoking any side-effect handler, the executor awaits `SideEffectStartingAsync`, which returns only after a durable write;
+  - if it fails or is fenced, the handler is not invoked and the attempt ends `Failed`/`CheckpointFailed`;
+  - if the write happened anyway (acknowledgement lost), the journal's checkpoint makes the attempt ambiguous.
+- **Abandoned attempts:** judged by their checkpoint. No checkpoint means no side effect started (provable); a checkpoint means ambiguous and unfenced until fenced (ADR-056); unreadable state means `Unknown`, treated as started and unfenced.
+- **Refusals:** released, never journaled, and they cannot influence later decisions.
+
+## ADR-050 — Evidence bound to operation and definition snapshot; one clock; evidence age
+- **Binding:**
+  - every attempt summary carries its `OperationId` and the snapshot of the version that actually ran: hash, version, timeout, `TargetEnforced`, `OperationIdSent`, reconcile policy;
+  - reconciliation evidence carries the policy snapshot of the version that ran the lookup;
+  - a history entry for another operation makes the history invalid (`NeedsReview`).
+- **No retroactive claims:** target-enforced idempotency is judged on each ambiguous attempt's own snapshot plus the current version. A newer version can never vouch for an older attempt. An operation-id lookup counts only if the ambiguous attempt sent the key.
+- **Clock:** all attempt timestamps and the evaluator's `now` come from the journal clock. `ObservedAt` is recorded immediately before the reconcile section.
+- **Authoritative NotFound authorizes a repeat only if** the ambiguous attempt is fenced (ADR-056) and:
+  - `ObservedAt ≥ DispatchHorizon + maxCommitLatencySeconds + ClockSkewAllowance` (default 5 s; ADR-057, ADR-060), and
+  - `now − ObservedAt ≤ maxEvidenceAgeSeconds` (default 300 s).
+- **No assumed timeouts:** no time is derived from an assumed process timeout (round 5 removed the former `StartedAt + TimeoutSeconds` rule).
+
+## ADR-051 — After a side effect, only declared permanent business outcomes are Failed
+- **Failed:** once a Normal attempt has written its first side-effect checkpoint, `Failed` is possible only through a terminal `captureResult` `failed` whose resolved transience is false.
+- **Succeeded:** only through a terminal `captureResult` `succeeded`.
+- **Everything else is `Indeterminate`,** keeping the original code. That covers browser, engine, technical, policy, timeout and cancellation errors, transient business outcomes, and run-time failures in the terminal `captureResult`. A technical error says nothing about whether the target committed.
+
+## ADR-052 — Exact-match reconciliation with reconcileMatch
+- **Structure:** the `reconcile` section ends with exactly one top-level `reconcileMatch` step (the 13th action type).
+- **Keys:**
+  - `reconciliation.matchKey` is `operationId` (`equals` = `{{operation.id}}`, and the workflow must send the operation id before every side effect) or `businessKey` (exactly one required, non-sensitive record input, attested unique);
+  - rows must be a superset of exact matches (author attestation).
+- **Findings:**
+  - exactly one exact match: `ReconciledFound`;
+  - zero rows with the empty indicator visible, or rows but no exact match: `ReconciledNotFound`;
+  - zero rows without the indicator: `Failed`/`LookupInconclusive` (transient);
+  - several exact matches, or more rows than `maxRows`: `NeedsReview`.
+- **Failures:**
+  - permanent reconcile errors lead to `NeedsReview`;
+  - transient failures, cancellations and abandoned reconciles count toward `RepeatSafety:MaxReconcileFailures` (default 3), after which the decision is `NeedsReview`;
+  - so a reconcile can never loop indefinitely.
+- **Superseded:** this replaces author-written `reconciled` / `notFound` / `needsReview` `captureResult` outcomes.
+
+## ADR-053 — Total step deadlines, restricted continue, explicit side effects
+- **Deadline:** `timeoutMs` is one total deadline per step and must not exceed `timeoutSeconds × 1000`.
+- **`onError: continue`:** allowed only on `wait`, `extract`, `screenshot`, `fill`, `select` and `condition`. Navigating or transferring actions can still complete after their timeout, so continuing past them is forbidden.
+- **`sideEffect`:** must be declared explicitly on every `click` and `upload` in `steps`; there is a warning for navigating clicks declared `false`.
+- **Late commits:** a server-side commit after a client timeout is covered by `Indeterminate` plus the authoritative commit-latency wait measured from the dispatch horizon (ADR-057, ADR-060).
+
+## ADR-054 — DemoCrm test-fixture extensions in Phase 4
+**Status:** Scope approved by the user (2026-11-15); design approved with Phase 4 on 2026-11-15.
+- **Extensions:**
+  - exact `OperationId` search with `data-operation-id` on result rows;
+  - a registration POST counter (`registrationSubmissions`) in the token-protected `GET /demo/state`, zeroed by `POST /demo/reset`;
+  - a `+late-commit` scenario that commits after the client disconnects.
+- **Boundaries:** DemoCrm stays independent (ADR-027). No production project may reference it, directly or transitively. The control token rules (ADR-028) are unchanged.
+- **Test rule:** every duplicate-risk test asserts the POST count, so a resubmission is detected even when DemoCrm rejects it as a duplicate.
+
+## ADR-055 — Centralized workflow limits with schema parity
+- **Single source:** all workflow limits are constants in `WorkflowLimits` (Application). The validator, run-time checks and documentation use them.
+- **Parity:** tests compare every numeric bound and enum in `docs/workflow-schema-v1.json` with the code.
+- **Server limits:** `SessionSeconds`, `Uploads.MaxBytes`, `RepeatSafety:ClockSkewSeconds`, `RepeatSafety:MaxReconcileFailures`, `RepeatSafety:MaxAmbiguousAttempts` and the journal's `LeaseSafetyMarginSeconds` are validated at startup. A workflow can never exceed them; for example, `timeoutSeconds` above `SessionSeconds` is refused at bind time.
+
+## ADR-056 — Fencing: no takeover while a previous attempt could still dispatch
+- **The problem:** a Worker that wrote its side-effect checkpoint and then froze (or lost its lease while alive) can still dispatch the click when it resumes.
+  - Its egress proxy is in-process and resumes with it.
+  - No in-process check can close the check-then-act window.
+  - Third-party targets cannot validate fencing tokens.
+- **Fence state:** such an attempt is **unfenced** until a fence is established, by any of:
+  - a **completed** egress revocation barrier recorded at completion (ADR-060; including a late completion after lease loss);
+  - abandonment without a checkpoint;
+  - positively confirmed process death of the Worker's whole containment unit (Phase 5; ADR-059);
+  - confirmed isolation termination, or the revocation report of an out-of-process lease-bound egress proxy (Phase 7);
+  - an audited human confirmation with verified evidence (ADR-059).
+- **Fence time:** `FencedAt` is always the journal commit time of a validated confirmation, never a requested, predicted or lease-derived time.
+- **While unfenced:**
+  - the journal refuses every new reservation for the operation (Normal and Reconcile);
+  - the evaluator returns `AwaitingFence` before any rule that can allow anything;
+  - lease expiry alone never permits takeover after a checkpoint.
+- **Fence time:** delays and evidence windows count from the dispatch horizon derived from the proven fence (ADR-060).
+- **Checkpoint acceptance:** an atomic conditional write with fencing token and lease margin (remaining lease ≥ step timeout + `LeaseSafetyMarginSeconds`), so a Worker that lost its lease before checkpointing never invokes the handler.
+- **Guarantees by phase:**
+  - Phase 4/5: at most the original attempt dispatches; no second attempt while it could still dispatch.
+  - Phase 7: can also stop the stale dispatch itself.
+
+## ADR-057 — Authoritative reconciliation requires a target commit-latency contract
+- **Contract block:** `evidence: "authoritative"` requires `reconciliation.authority` with `maxCommitLatencySeconds` and a `contractReference` (part of the hashed definition).
+- **What the cited contract must guarantee:** bounded commit latency, read-your-writes lookup, visibility of pending records, and a unique key with superset search.
+- **What the bound covers (round 9):** `maxCommitLatencySeconds` must cover everything after the dispatch horizon (ADR-060): **local buffering below our socket layer, network transit, target processing and query visibility**. An author reasoning from upstream write admission must also include local queueing time. It is a trusted attestation, not a TCP guarantee.
+- **Where it comes from:** the target operator (documentation, written statement, or the organization's own system configuration).
+- **Not a contract:** observed delays, empty searches and measured response times. A generic website is never authoritative merely because a search returned nothing after a delay.
+- **No contract means advisory:** without a contract the workflow must be `advisory`, which never authorizes an automatic repeat.
+- **Hosted mode:** authoritative attestations are admin-only.
+- **Replaces** the former `minDelaySeconds`. The wait is `DispatchHorizon + maxCommitLatencySeconds + skew` (ADR-060).
+
+## ADR-058 — Attempt journal implementation boundary; production fails closed
+- **Phase 4:** validates the journal and execution contracts with test implementations only (in-memory and fault-injecting journals, `IsDurable = false`) through a shared conformance suite. Phase 4 has no customer execution path.
+- **Phase 5:** the PostgreSQL journal must pass the same suite plus crash-recovery (with a really killed Worker process), fencing and concurrency tests before any customer execution.
+- **No real customer execution may rely on an in-memory or non-durable journal.**
+- **Fail closed:** a production Worker fails at startup, in every environment and without any override, unless:
+  - a durable, fencing journal is registered;
+  - its lease length covers the longest side-effect timeout plus the margin;
+  - the process-death fence supervisor is configured and its containment handshake succeeds (ADR-059).
+
+  An unreachable journal refuses every attempt.
+
+## ADR-059 — Process-death supervisor and fence-confirmation contract
+- **Identity:**
+  - every Worker registers an incarnation (GUID, host id, boot id, PID and start time, containment unit) before reserving anything;
+  - every attempt is bound to it;
+  - the containment unit (a Linux cgroup v2 unit, or a Windows Job Object created by the supervisor with breakaway disallowed) holds the Worker, its in-process egress proxy, the Playwright driver and every Chromium process;
+  - membership is inherited and cannot be left without privileges the Worker lacks, so orphans remain inside.
+- **Positive confirmation:** the supervisor (same host, outside the unit) kills the **whole unit**. It confirms only when both hold:
+  - the kernel or job reports the unit **empty** (`cgroup.events populated 0` / `ActiveProcesses == 0`);
+  - a **socket drain** over the incarnation's connection ledger, using OS connection identity, shows every upstream connection in a state where TCP originates nothing more. Linux destroys transmit-capable sockets by exact cookie in the dedicated namespace; Windows never terminates and fails closed on ambiguity (ADR-060).
+
+  A changed host boot id is also a confirmation, because no kernel sockets survive a reboot.
+  - **Not confirmations:** kill requests, signals, expired leases, stale heartbeats, missing or reused PIDs, the Worker alone being gone, and timeouts.
+  - **Orphans:** children that survive their parent stay in the unit and are killed and proven gone with it.
+- **Credentials and connections:**
+  - in-process proxy credentials exist only in the Worker's memory and are never persisted or shared, so they are unusable once that process no longer exists;
+  - sockets closed by process exit **linger in the background** (`socket(7)`) and may keep transmitting buffered data, which is why the socket drain is required in addition to "unit empty";
+  - a frozen or partitioned Worker keeps them usable, which is why it stays unfenced.
+- **Human confirmation:**
+  - platform operators only (never tenants);
+  - a closed list of methods: host powered off or destroyed, host rebooted, or `DrainVerified` (unit empty **plus** a supervisor drain report). "Container removed" or "unit empty" without a drain report is not accepted;
+  - a mandatory evidence reference and personal attestation;
+  - fully audited.
+- **Timestamps:** `FencedAt` is the journal commit time of a validated confirmation. Kill-request time, lease expiry and observation times are diagnostics only.
+- **Validation and scope:** the journal rejects evidence whose incarnation or unit does not match, whose method is not listed, or that lacks a successful drain report (`ProcessDeathConfirmed`, `DrainVerified`). A valid confirmation fences every unfenced attempt of that incarnation.
+- **Failure:** without proof, attempts stay `AwaitingFence`, become `NeedsReview` after `FenceWaitSeconds`, and are never retried automatically. A late fence requires an explicit operator requeue.
+- **Topology and operations:**
+  - valid only when browser and proxy run inside the Worker's unit; other topologies need the Phase 7 fence sources;
+  - Worker hosts are never restored or cloned from memory snapshots.
+- **Phase split:** Phase 4 defines the contract and proves journal-side validation with a fake supervisor (F9–F15). Phase 5 implements the supervisor and must pass P1–P13 on real processes.
+- **A fence is not a failure:** a fence means nothing *further* can be dispatched; already-dispatched requests may have committed. A fenced attempt stays ambiguous, and its side-effect state and outcome are unchanged. Only the repeat-safety rules resolve it (ADR-045), with the commit-latency contract (ADR-057) and reconciliation rules (ADR-052) unchanged. After process death, evidence counts from the dispatch horizon `FencedAt`, which is valid only because the fence includes the socket drain (ADR-060).
+
+## ADR-060 — Egress revocation barrier, upstream write gate, socket drain and dispatch horizon
+**Amended in review rounds 8 and 9.**
+- **Findings:**
+  - the Phase 3 `EgressSession.Dispose` is not a barrier: it has an admission race, untracked upstream sockets, already-read requests and tunnel buffers still written upstream, graceful close, no wait for handlers, and an unsynchronized flag;
+  - the round-7 "check token, then write" is not atomic: a write that passed its check can execute after revocation began.
+- **Write gate:**
+  - every upstream connection creation and payload send happens inside an admission from `UpstreamWriteGate.TryEnter`, taken under the **same lock** as session admission;
+  - only `UpstreamChannel` may send upstream (source-scanned);
+  - admitted sends are not cancelled, are at most 16 KB, and follow the connection's entry in the connection ledger.
+- **Barrier `EgressSession.RevokeAsync`:**
+  - **B1 (Lr):** under the lock, set revoked, so no admission or write can start;
+  - **B2:** wait for every write admitted before Lr;
+  - **B3 (Ta):** abortive close (linger 0) of all upstream sockets and close of all browser-side sockets, including keep-alive CONNECT tunnels;
+  - **B4:** wait for all handlers;
+  - **B5:** `Completed`, or `TimedOut` after `Egress:RevocationTimeoutSeconds` (default 10).
+
+  No send syscall begins after Lr, and none is executing after Ta.
+- **Fencing:**
+  - `EgressRevoked` and `ExecutionFenced` are true only for `Completed`;
+  - the barrier runs before the browser context is closed, and `CompleteAsync` only after it;
+  - `TimedOut` (e.g. a send blocked on a full buffer) leaves the attempt unfenced;
+  - `Dispose()` never fences;
+  - the Phase 7 proxy reports revocation only after the same barrier.
+- **OS facts** (verified against OS documentation on 2026-11-15):
+  - Linux `TCP_USER_TIMEOUT` (milliseconds) only bounds *unacknowledged* data or zero-window stalls, and does not change retransmission;
+  - Windows `TCP_MAXRT` (seconds; -1 = infinite) is documented for retransmission only;
+  - neither bounds a slowly acknowledging peer or a socket lingering after `_exit` ("always lingers in the background", `socket(7)`);
+  - Linux zero-linger RST is **not** documented in `socket(7)` and is verified empirically (V7); Windows documents the abortive close ("unsent data is lost").
+- **Consequences of the OS facts:**
+  - the round-7 `FencedAt + UpstreamMaxRetransmitSeconds` horizon and the 256 KB send-buffer cap are **withdrawn**;
+  - `Egress:UpstreamUserTimeoutSeconds` (default 30) remains as fail-fast only, never as a guarantee.
+- **Connection ledger and identity (round 9):** before any payload, every upstream connection is fsync-appended to a per-incarnation ledger with its tuple **and OS identity**:
+  - Linux: socket cookie `SO_COOKIE`;
+  - Windows: `liCreateTimestamp` of the owner-module TCP row, read by matching tuple and own PID, exactly one row required.
+
+  A connection whose identity cannot be read is aborted unused.
+- **Socket drain for fences without a barrier:** `ProcessDeathConfirmed` additionally requires a drain.
+  - **Linux:**
+    - the incarnation runs in a **dedicated network namespace** (handshake-verified; the supervisor holds a handle), so after "unit empty" every socket in it is an orphan of that incarnation and no replacement from another process can appear;
+    - all TCP sockets in the namespace are enumerated completely (`sock_diag`; interrupted or failed dumps are retried, then fail closed);
+    - transmit-capable sockets are destroyed by `SOCK_DESTROY` carrying the **exact cookie**, so another socket is never destroyed (kernel behaviour verified by P11b);
+    - drained only when every socket is safe.
+  - **Windows:**
+    - no per-process namespace exists and `SetTcpEntry` targets only by tuple, so the supervisor **never terminates any connection**;
+    - each ledger entry must match by tuple **and** `liCreateTimestamp`;
+    - a same-tuple row with a different or zero timestamp, or duplicate rows, is **ambiguous → no fence**;
+    - lingering connections are polled until gone or safe, otherwise `NeedsReview`.
+
+    The round-8 IPv4-only restriction is withdrawn.
+  - **Fail closed:** any of these means no fence: unreadable or corrupt ledger (except a torn final record, which carried no payload by construction); lost or shared namespace; incomplete enumeration; `SOCK_DESTROY` unsupported (`EOPNOTSUPP`), denied (`EPERM`) or silently skipped; ambiguity; partial drain; supervisor restart mid-drain.
+  - **Phase 7:** `IsolationTerminated` is not accepted until it specifies an equivalent proof.
+- **Three events (round 9):**
+  - **E1, write completion:** every admitted send returned; proven by B1/B2, or by "unit empty" after a process death;
+  - **E2, connection destruction:** TCP originates no further segment or retransmission; proven by B3 (V7) or by the drain;
+  - **E3, physical departure** of segments already handed below the socket layer (queueing, driver/NIC, veth/bridge/NAT, hypervisor): **not proven and never claimed**. An absent or terminal TCP entry says nothing about E3.
+- **Dispatch horizon:** H = `FencedAt` (`AbandonedAt` for `NoCheckpoint`), recorded only after E1 and E2 are proven. It is a **conservative upper bound** on every write admission, every write completion and the end of TCP-originated transmission, **not** a physical-departure time.
+- **Why it is safe:**
+  - all bytes of every request were admitted, and transmitted by our TCP if at all, before H;
+  - the **trusted** latency attestation (ADR-057) covers local below-socket buffering, transit, target processing and query visibility after H;
+  - so an authoritative `NotFound` observed at ≥ H + L + skew cannot be followed by that request committing;
+  - a wrong attestation (e.g. a paused or suspended host, or transit beyond L) breaks this. That is a documented limitation, Worker hosts must not be paused, and H4/P12 demonstrate the effect.
+- **Not claimed:** E3; and that a dispatched side effect failed. The reconciliation rules are unchanged.
+- **Tests:**
+  - Phase 4: V1–V12 (V12 shows that socket destruction is not delivery), write gate WG1–WG6 (including deterministic pauses between the final admission check and the send), horizon races H1–H4 (including a negative control);
+  - Phase 5: P7–P13 (lingering sockets, trickling peer, destroy capability, ledger problems, connection identity and port reuse P11a–P11f, below-socket queueing with `netem`, fail-closed matrix).
 ---
 
 ## Resolved from the approval round (2026-11-11)
 1. SDK: selected from inspection, not blindly pinned (ADR-004). 2. PostgreSQL: Docker `postgres:18`, port 5433, volume (ADR-013). 3. Git initialized; commit after each verified phase; no secrets or generated artifacts. 4. Identity + JWT (ADR-010). 5. Hand-written validators (ADR-016). 6. Razor Pages Demo CRM (ADR-011). 7. Folder layout `src/ tests/ web/ deploy/ docs/`, React in `web/automataflow-web`. 8. 16-day target, 16–20 realistic; quality over deadline. 9. Frontend libraries deferred (ADR-019). 10. Playwright Chromium download approved for Phase 3.
 
+## Phase 4 final approval
+**Status:** Approved by the user on 2026-11-15, after review round 9 of docs/PHASE4_PLAN.md.
+- **What becomes binding:** ADR-045 to ADR-060 (as amended through round 9) and the round-4 amendments of ADR-038, ADR-039, ADR-043 and ADR-044.
+- **Implementation:** authorized; it proceeds sequentially by the plan's steps, each one reviewed before the next.
+- **Verification:** specification approval does not waive any implementation or platform-specific verification. A safety guarantee is claimed as implemented only once code and tests demonstrate it.
+
 ## Pending approval
-None at this time.
+None at this time. (Each Phase 4 implementation step is reviewed by the user before the next step starts.)

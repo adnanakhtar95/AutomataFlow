@@ -7,7 +7,7 @@ Status: Draft v0.2. Estimates are indicative planning aids, not deadlines; quali
 | 1 | Solution foundation and environment setup | 1.5 | done |
 | 2 | Demo CRM | 2 | done |
 | 3 | Playwright browser engine (incl. egress proxy, SSRF test matrix) | 6.5 | done (approved 2026-11-12) |
-| 4 | Workflow engine and action registry | 5.0 | planned (decisions approved) |
+| 4 | Workflow engine and action registry (incl. repeat safety, attempt journal port, DemoCrm fixture extensions) | 11.0 | approved 2026-11-15; in progress |
 | 5 | Background workers and job orchestration | 3 | |
 | 6 | React dashboard | 3 | |
 | 7 | Testing, security, Docker, hosted isolation, documentation | 2+ | |
@@ -70,12 +70,30 @@ Checklist (docs/PHASE3_PLAN.md acceptance list):
 18. [x] Secrets audit, separate Phase 3 commit, clean tree.
 
 ## Phase 4 — Workflow engine and action registry
-Detailed plan: `docs/PHASE4_PLAN.md`: decisions D1–D7 approved 2026-11-12 (ADR-037..043), sink rules ADR-044; implementation awaits final approval. Estimate 5.0 days (range 4.5–6).
-- Workflow definition model, JSON schema, validator, versioning rules.
-- `IActionHandler` contract, registry, the 12 actions, variable substitution, secret masking.
-- Executor with per-step timeouts, error classification (transient/permanent), result capture.
+Detailed plan: `docs/PHASE4_PLAN.md`. Status:
+- decisions D1–D7 approved 2026-11-12 (ADR-037..043); sink rules ADR-044;
+- review rounds 2–9 decisions ADR-045..060 binding;
+- DemoCrm fixture scope approved 2026-11-15 (ADR-054);
+- **final approval granted by the user on 2026-11-15; implementation in progress, step by step, with no verification waived.**
+
+Estimate 11.0 days (range 10.0–13.0).
+
+Scope:
+- Workflow definition model, JSON schema, validator, versioning rules, centralized `WorkflowLimits` (ADR-055).
+- `IActionHandler` contract, registry, the 13 actions (incl. `reconcileMatch`), variable substitution, secret masking, URL canonicalization.
+- Executor with total per-step deadlines, error classification (only declared business outcomes are `Failed` after a side effect), result capture.
+- Repeat safety:
+  - `RepeatSafetyEvaluator` (first-match rules, default NeedsReview);
+  - `IAttemptJournal` port with a single in-flight attempt, durable conditional side-effect checkpoint and fencing (no takeover while an attempt is unfenced, ADR-056);
+  - authoritative reconciliation only with a target commit-latency contract (ADR-057);
+  - test implementations and a shared conformance suite only; no customer execution in Phase 4 (ADR-058);
+  - process-death supervisor and fence-confirmation contract, with journal-side evidence validation tested against a fake supervisor (ADR-059);
+  - egress revocation barrier in the Phase 3 proxy: atomic admission; upstream write gate (no send begins after revocation; admitted sends drained before the abort); abortive close incl. keep-alive tunnels; handler completion;
+  - connection ledger with OS connection identity; dispatch horizon = conservative fence time after write completion and connection destruction (not physical departure); latency attestation covers local buffering, transit, processing and visibility (ADR-057, ADR-060).
 - Declarative Condition expressions.
-**Exit:** Customer-registration workflow defined purely as JSON runs against Demo CRM; every action has unit/automation tests; invalid workflows rejected with precise errors.
+- DemoCrm test-fixture extensions: exact OperationId search, registration POST counter, `+late-commit` scenario.
+
+**Exit:** Customer-registration workflow defined purely as JSON runs against Demo CRM; every action has unit/automation tests; invalid workflows rejected with precise errors; all ambiguity, crash and concurrency scenarios pass with exact customer **and** POST counts.
 
 ## Phase 5 — Background workers and job orchestration
 - Full EF model and migrations for the 13 entities; org-scoped query filters.
@@ -83,7 +101,20 @@ Detailed plan: `docs/PHASE4_PLAN.md`: decisions D1–D7 approved 2026-11-12 (ADR
 - Durable claiming (`SKIP LOCKED`, lease, heartbeat, recovery), concurrency, retries/backoff, cancellation, partial failure, job completion states, result export.
 - Execution logs/artifacts persistence; ASP.NET Core Identity + JWT auth, refresh tokens, role policies.
 - Tenant isolation per ARCHITECTURE §7.1: application-service scoping, write guard, cross-tenant tests (also with query filters disabled).
-- OperationId, Indeterminate attempts, reconciliation and NeedsReview (ARCHITECTURE §5.6).
+- OperationId, Indeterminate attempts, reconciliation and NeedsReview (ARCHITECTURE §5.6):
+  - PostgreSQL `IAttemptJournal` (unique in-flight/unfenced constraint, conditional checkpoint, fencing tokens, lease renewal, database clock, late completion, audited `ConfirmFenceAsync`);
+  - it must pass the shared Phase 4 conformance suite plus the crash (really killed Worker), fencing and concurrency tests before any customer execution;
+  - process-death fence supervisor (ADR-059):
+    - Worker incarnation registration;
+    - cgroup v2 / Job Object containment with a startup handshake;
+    - whole-unit kill with positive "unit empty" or boot-id proof;
+    - supervisor socket drain over the connection ledger (Linux: dedicated network namespace, destroy by exact cookie; Windows: tuple + creation-timestamp identity, never terminates, ambiguity fails closed);
+    - tests P1–P13 on real processes (incl. port-reuse P11a–P11f and below-socket queueing P12);
+    - platform-operator human confirmation with audited evidence;
+    - runbook rule: no memory-snapshot restore of Worker hosts;
+  - `AwaitingFence` → NeedsReview after `FenceWaitSeconds`;
+  - Worker fails closed without a durable, fencing journal (ADR-058);
+  - scheduling from `RepeatSafetyEvaluator` decisions.
 - Usage records written.
 **Exit:** CSV demo end to end through API + Worker; worker-kill recovery test; cancellation test; retry of injected temporary errors; cross-tenant test.
 
@@ -98,6 +129,7 @@ Detailed plan: `docs/PHASE4_PLAN.md`: decisions D1–D7 approved 2026-11-12 (ADR
 - Coverage gaps, security review against ARCHITECTURE §9, dependency vulnerability scan, license audit.
 - Dockerfiles and full Compose stack (postgres, api, worker, demo-crm, web); non-root, resource limits.
 - Operations guide, workflow authoring guide, README, updated ADRs.
+- Execution fencing (ADR-056): out-of-process egress proxy that binds each session credential to the attempt lease and refuses requests after lease expiry (`EgressLeaseExpired`), and orchestrator-confirmed container termination (`IsolationTerminated`), enabling automatic takeover after a frozen Worker.
 - Hosted isolation (ADR-031): standalone egress-proxy host and container, browser on an `internal: true` Docker network reachable only to the proxy, proxy egress firewall, Chromium sandbox seccomp profile, resource limits; remote-browser (per-tenant browser server) implementation; detailed browser launch-time benchmarking (deferred from Phase 3, ADR-029).
 **Exit:** `docker compose up` yields a working demo from a clean machine; docs verified by following them.
 

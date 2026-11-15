@@ -1,6 +1,6 @@
 # AutomataFlow — Architecture
 
-Status: Draft v0.1 (pre-implementation)
+Status: Draft v0.1. Phases 1–3 implemented. The Phase 4 specification (docs/PHASE4_PLAN.md; ADR-037 to ADR-060) was approved on 2026-11-15, and its rules for repeat safety, fencing and egress (§5.6, §9) are binding. Each guarantee is claimed as implemented only once tests demonstrate it.
 
 ## 1. Style
 Modular monolith, one codebase, two deployable processes (**Api** and **Worker**) sharing the same libraries and one PostgreSQL database. Clean architecture: dependencies point toward Domain.
@@ -124,9 +124,28 @@ Execution is at-least-once: a worker can crash, or a request can time out, **aft
 
 1. **Stable operation identifier.** Every JobRecord has an `OperationId` (a GUID generated once at record creation, persisted, identical across all attempts and retries). It is exposed to workflows as `{{operation.id}}`. Never regenerated on retry.
 2. **Target-side duplicate detection (the real guard).** Where the target system can cooperate, the operation id is submitted with the action and the target enforces uniqueness on it (and on business keys such as email). Replaying the same operation id returns the original result instead of creating a second record. The Demo CRM implements this contract: hidden `operationId` field / `Idempotency-Key` header, a unique index on it, and a distinct "already processed" confirmation response that returns the original customer id. For third-party targets that cannot cooperate, the workflow declares a business-key reconciliation lookup instead (below) and the platform marks the operation as *at risk* in docs/UI.
-3. **Reconciliation after ambiguous outcomes.** A step flagged `sideEffect: true` (e.g. the final submit click) that ends in timeout, crash, lost lease or navigation error leaves the attempt **Indeterminate** (not Failed). The next attempt for that record does not blindly repeat the action: it first runs the workflow's `reconcile` steps (search by operation id or business key, extract the confirmation). Outcomes: *found* → record Succeeded with the reconciled result, attempt flagged `Reconciled`; *not found* → safe to run the normal steps again; *inconclusive* → record moves to `NeedsReview` for a human instead of retrying. Lease-expiry recovery (§5.1) applies the same rule: an attempt that died after any side-effect step becomes Indeterminate.
+3. **Reconciliation after ambiguous outcomes.** A step flagged `sideEffect: true` (e.g. the final submit click) is preceded by a durable side-effect checkpoint in the attempt journal. If the attempt then ends without a declared business outcome (timeout, crash, lost lease, navigation or any technical error), it is **Indeterminate** (not Failed). The record is never blindly repeated:
+   - **Next step:** `RepeatSafetyEvaluator` decides what may happen next from the journal history (docs/PHASE4_PLAN.md §10.5, ADR-045).
+   - **Separate reconcile attempt:** a reconcile attempt runs `setup` and `reconcile` only and **never continues into the normal steps**. It finds the record by exact operation id or business key (`reconcileMatch`).
+   - *Found* → the record is resolved with the reconciled result.
+   - *Ambiguous match*, or a reconcile that fails permanently or too often → `NeedsReview`.
+   - *Not found* is evidence, not permission: a repeat is allowed only with target-enforced idempotency or an **authoritative** lookup. Authoritative requires a documented target commit-latency contract (ADR-057), observed at least that latency after the previous attempt's dispatch horizon, and still fresh. The dispatch horizon is the proven fence time: a conservative upper bound after every admitted write completed and every upstream connection was destroyed. It is not a proof that queued packets physically left the host, which is why the attested latency must cover local buffering, transit, processing and visibility (ADR-057, ADR-060). Otherwise the record goes to `NeedsReview`.
+   - **Lease-expiry recovery** (§5.1): an abandoned attempt is judged by its checkpoint.
+     - Without a checkpoint it provably started no side effect.
+     - With a checkpoint it is ambiguous **and unfenced**: a frozen Worker could still dispatch when it resumes. No other attempt for that OperationId is admitted until a fence is proven:
+       - a (late) completion after a **completed** egress revocation barrier: no new request admitted; every upstream send admitted through a write gate, so none begins after revocation and admitted ones finish before the abort; every connection aborted, including keep-alive tunnels; all handlers finished (ADR-060);
+       - a supervisor-confirmed empty containment unit (Worker, proxy, driver and all Chromium processes, orphans included) **plus** a socket drain that proves, by OS connection identity, that every upstream connection has been destroyed or closed (Linux: dedicated namespace, destroy by exact cookie; Windows: tuple + creation timestamp, never terminates, ambiguity fails closed), or a changed host boot id;
+       - isolation termination;
+       - or an audited platform-operator confirmation with verified evidence (ADR-056, ADR-059).
 
-Retry classification is therefore: transient + no side effect started → plain retry; transient after a side-effect step → reconcile first; permanent (validation, duplicate business key) → fail, no retry. Job/record counters and result exports distinguish `Reconciled` and `NeedsReview`. Demo CRM acceptance tests inject "commit then fail response" errors to prove no duplicate customers are created.
+       A kill request or an expired lease is never a fence. Without proof, the record goes to `NeedsReview` and is not retried automatically.
+
+Retry classification is therefore:
+- no side effect started → plain retry;
+- side effect started → only with safety evidence (idempotency, or authoritative not-found), otherwise reconcile or `NeedsReview`;
+- declared permanent business outcome (validation, duplicate business key) → fail, no retry.
+
+At most one attempt per OperationId is in flight at any time (attempt journal, ADR-049). Job/record counters and result exports distinguish `Reconciled` and `NeedsReview`. Demo CRM acceptance tests inject "commit then fail response", "fail before commit" and "late commit" errors and assert both customer counts and registration POST counts, proving that no duplicate submission happens without evidence.
 
 ## 6. Monitoring
 - `ExecutionLogs`: per attempt, sequence number, timestamp, level, step id, message template, structured properties (JSON). Written in batches by the worker.
