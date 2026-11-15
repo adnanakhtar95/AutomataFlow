@@ -7,8 +7,8 @@ Status: Draft v0.2. Estimates are indicative planning aids, not deadlines; quali
 | 1 | Solution foundation and environment setup | 1.5 | done |
 | 2 | Demo CRM | 2 | done |
 | 3 | Playwright browser engine (incl. egress proxy, SSRF test matrix) | 6.5 | done (approved 2026-11-12) |
-| 4 | Workflow engine and action registry (incl. repeat safety, attempt journal port, DemoCrm fixture extensions) | 11.0 | approved 2026-11-15; in progress |
-| 5 | Background workers and job orchestration | 3 | |
+| 4 | Workflow engine and action registry (incl. repeat safety, attempt journal port, DemoCrm fixture extensions) | 11.0 | done (2026-11-15) |
+| 5 | Background workers and job orchestration (execution platform) | 3 (indicative; far larger in practice) | authorized 2026-11-15; in progress (docs/PHASE5_PLAN.md) |
 | 6 | React dashboard | 3 | |
 | 7 | Testing, security, Docker, hosted isolation, documentation | 2+ | |
 
@@ -99,6 +99,7 @@ Scope:
 **Exit:** Customer-registration workflow defined purely as JSON runs against Demo CRM; every action has unit/automation tests; invalid workflows rejected with precise errors; all ambiguity, crash and concurrency scenarios pass with exact customer **and** POST counts.
 
 ## Phase 5 — Background workers and job orchestration
+Detailed step plan: `docs/PHASE5_PLAN.md` (authorized 2026-11-15).
 - Full EF model and migrations for the 13 entities; org-scoped query filters.
 - Job creation API with CSV/JSON parsing and upload limits.
 - Durable claiming (`SKIP LOCKED`, lease, heartbeat, recovery), concurrency, retries/backoff, cancellation, partial failure, job completion states, result export.

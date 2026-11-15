@@ -575,6 +575,19 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
 - **Carried into Phase 5 (unchanged ROADMAP exit criteria):** the durable PostgreSQL journal passing the shared conformance suite; the process-death supervisor with P1–P13; database-level cross-tenant tests; killed-process K tests; hosted-mode restrictions on who may publish attestations.
 ---
 
+## ADR-067 — Phase 5 persistence model and database-side tenant isolation (Phase 5 step 1)
+**Status:** Accepted (2026-11-15; implements docs/ARCHITECTURE.md §7 and §7.1 layers 3, 4 and 6).
+- **Entities:** Workflows, WorkflowVersions, WorkflowInputs, Jobs (options as a complex type), JobRecords, JobAttempts, ExecutionLogs, ExecutionArtifacts, UsageRecords and Integrations (schema only), plus `OrganizationSecrets`. Workflow secrets need organization-scoped storage that §7 did not list; values are stored only as Data Protection payloads.
+- **Journal tables:** `AttemptJournal`, `WorkerIncarnations`, `WorkerKillRequests`, `FenceConfirmations` (an audit record of every confirmation, accepted or rejected). The journal writes them only with explicit SQL; EF maps them for the schema.
+- **Exclusivity in the database:** a `Blocking` column (Reserved, Started, or a side effect that is not yet fenced) with the partial unique index `UX_AttemptJournal_OneBlocking` on (organization, operation). R6 is therefore enforced by PostgreSQL, not only by application logic. Fencing tokens come from an identity column.
+- **Isolation layers:**
+  - every foreign key between customer tables is composite (`OrganizationId`, parent id), so the database refuses a cross-organization reference even from a faulty application layer;
+  - a scoped `TenantScope` (set once per unit of work, never switched) drives a global query filter on every organization-owned entity except the explicit-SQL journal. No scope means no rows;
+  - a `SaveChanges` write guard refuses any organization-owned write outside the scope, or without a scope;
+  - an internal test hook disables only the query filter, to prove the application layer on its own;
+  - a source scan forbids `IgnoreQueryFilters` outside reviewed files (none yet) and any production use of the hook.
+- **Statuses:** records add `Reconciled`, `Invalid` and `AwaitingFence`; attempts add `ReconciledFound`, `ReconciledNotFound`, `NeedsReview` and `Abandoned`. Statuses are stored as strings.
+- **Migrations:** generated inside the pinned Linux container, because Smart App Control blocks loading the freshly built assembly for `dotnet ef` on the Windows host.
 ## Resolved from the approval round (2026-11-11)
 1. SDK: selected from inspection, not blindly pinned (ADR-004). 2. PostgreSQL: Docker `postgres:18`, port 5433, volume (ADR-013). 3. Git initialized; commit after each verified phase; no secrets or generated artifacts. 4. Identity + JWT (ADR-010). 5. Hand-written validators (ADR-016). 6. Razor Pages Demo CRM (ADR-011). 7. Folder layout `src/ tests/ web/ deploy/ docs/`, React in `web/automataflow-web`. 8. 16-day target, 16–20 realistic; quality over deadline. 9. Frontend libraries deferred (ADR-019). 10. Playwright Chromium download approved for Phase 3.
 
@@ -585,4 +598,4 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
 - **Verification:** specification approval does not waive any implementation or platform-specific verification. A safety guarantee is claimed as implemented only once code and tests demonstrate it.
 
 ## Pending approval
-None at this time. On 2026-11-15 the user authorized the Step 3 audit follow-up and Phase 4 steps 4, 5 and 6 to be completed consecutively, with one consolidated report after step 6. After accepting them, the user authorized steps 7, 8, 9 and 10 to be completed consecutively. Phase 4 is complete with step 10; Phase 5 has not been started and needs explicit approval.
+None at this time. On 2026-11-15 the user authorized the Step 3 audit follow-up and Phase 4 steps 4, 5 and 6 to be completed consecutively, with one consolidated report after step 6. After accepting them, the user authorized steps 7, 8, 9 and 10 to be completed consecutively. Phase 4 is complete with step 10. On 2026-11-15 the user authorized Phase 5 in full, to be completed consecutively (docs/PHASE5_PLAN.md).

@@ -23,6 +23,7 @@ public static class DependencyInjection
                 "Set the ConnectionStrings__Default environment variable (see deploy/.env.example).");
         }
 
+        services.AddScoped<TenantScope>();
         services.AddDbContext<AutomataFlowDbContext>(options =>
             options.UseNpgsql(connectionString));
 

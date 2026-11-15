@@ -22,6 +22,6 @@ internal sealed class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<A
             .UseNpgsql(connectionString, npgsql => npgsql.MigrationsAssembly(typeof(AutomataFlowDbContext).Assembly.FullName))
             .Options;
 
-        return new AutomataFlowDbContext(options);
+        return new AutomataFlowDbContext(options, new TenantScope());
     }
 }

@@ -11,8 +11,16 @@ public class MigrationTests
 {
     private static readonly DateTimeOffset Now = new(2026, 11, 11, 10, 0, 0, TimeSpan.Zero);
 
-    private static AutomataFlowDbContext CreateContext(string connectionString) =>
-        new(new DbContextOptionsBuilder<AutomataFlowDbContext>().UseNpgsql(connectionString).Options);
+    private static AutomataFlowDbContext CreateContext(string connectionString, Guid? organization = null)
+    {
+        var scope = new TenantScope();
+        if (organization is { } org)
+        {
+            scope.Enter(org);
+        }
+
+        return new(new DbContextOptionsBuilder<AutomataFlowDbContext>().UseNpgsql(connectionString).Options, scope);
+    }
 
     [Fact]
     public async Task Migrations_apply_to_an_empty_database_and_leave_the_model_in_sync()
@@ -33,17 +41,17 @@ public class MigrationTests
     {
         var ct = CancellationToken.None;
         await using var database = await TestDatabase.CreateAsync(ct);
-        await using var context = CreateContext(database.ConnectionString);
+        var org = Organization.Create("Acme", "acme", Now);
+        await using var context = CreateContext(database.ConnectionString, org.Id);
         await context.Database.MigrateAsync(ct);
 
         var user = new ApplicationUser { Id = Guid.NewGuid(), UserName = "demo@example.test", Email = "demo@example.test", CreatedAt = Now };
-        var org = Organization.Create("Acme", "acme", Now);
         context.Users.Add(user);
         context.Organizations.Add(org);
         context.OrganizationMembers.Add(OrganizationMember.Create(org.Id, user.Id, OrganizationRole.Owner, Now));
         await context.SaveChangesAsync(ct);
 
-        await using var readContext = CreateContext(database.ConnectionString);
+        await using var readContext = CreateContext(database.ConnectionString, org.Id);
         var member = await readContext.OrganizationMembers.SingleAsync(ct);
         Assert.Equal(org.Id, member.OrganizationId);
         Assert.Equal(OrganizationRole.Owner, member.Role);
@@ -57,10 +65,11 @@ public class MigrationTests
     {
         var ct = CancellationToken.None;
         await using var database = await TestDatabase.CreateAsync(ct);
-        await using var context = CreateContext(database.ConnectionString);
+        var missingOrganization = Guid.NewGuid();
+        await using var context = CreateContext(database.ConnectionString, missingOrganization);
         await context.Database.MigrateAsync(ct);
 
-        context.OrganizationMembers.Add(OrganizationMember.Create(Guid.NewGuid(), Guid.NewGuid(), OrganizationRole.Viewer, Now));
+        context.OrganizationMembers.Add(OrganizationMember.Create(missingOrganization, Guid.NewGuid(), OrganizationRole.Viewer, Now));
 
         await Assert.ThrowsAsync<DbUpdateException>(() => context.SaveChangesAsync(ct));
     }

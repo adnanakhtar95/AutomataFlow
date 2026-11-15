@@ -16,7 +16,7 @@ public class ModelAndConfigurationTests
         var options = new DbContextOptionsBuilder<AutomataFlowDbContext>()
             .UseNpgsql("Host=localhost;Database=model-only")
             .Options;
-        return new AutomataFlowDbContext(options);
+        return new AutomataFlowDbContext(options, new TenantScope());
     }
 
     [Fact]
