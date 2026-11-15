@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using AutomataFlow.Application.Network;
 using AutomataFlow.Automation.Network;
 using AutomataFlow.Automation.Network.Proxy;
 using AutomataFlow.AutomationTests.Support;

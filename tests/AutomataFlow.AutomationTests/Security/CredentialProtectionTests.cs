@@ -70,6 +70,6 @@ public sealed partial class CredentialProtectionTests(BrowserFixture fixture)
 
 internal static class PolicyExtensions
 {
-    public static AutomataFlow.Automation.Network.EgressPolicy HostileSafePolicy(this BrowserFixture fixture) =>
-        AutomataFlow.Automation.Network.EgressPolicy.Create("http://public.test", "http://private.test");
+    public static AutomataFlow.Application.Network.EgressPolicy HostileSafePolicy(this BrowserFixture fixture) =>
+        AutomataFlow.Application.Network.EgressPolicy.Create("http://public.test", "http://private.test");
 }

@@ -176,7 +176,7 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
 **Status:** Approved by the user on 2026-11-12, on the basis of the reported verification: 508 passing tests across two consecutive complete green runs, commit `fd942c2`.
 
 ## ADR-037 — Pure host and IP policy types move to Application; runtime enforcement stays in Automation
-**Status:** Accepted (user decision D1, 2026-11-12; implemented in Phase 4).
+**Status:** Accepted (user decision D1, 2026-11-12). Implemented in Phase 4 step 1 (2026-11-15): pure move, all 508 Phase 3 tests green, placement enforced by `NetworkPolicyPlacementTests`.
 - **What moves** to `AutomataFlow.Application.Network`: `AllowedHostRule`, `EgressPolicy`, `HostNameNormalizer`, `IpAddressPolicy` and `NormalizedHost`. They contain definitions and parsers only, with no I/O and no packages. This lets publish-time validation (Api, via Application) use the exact runtime parser.
 - **What stays in Automation:** the request guard, browser guards, egress proxy, fail-closed gating and Chromium hardening. Phase 3 security is preserved.
 - **Gate:** all Phase 3 tests must pass unchanged, apart from namespaces.

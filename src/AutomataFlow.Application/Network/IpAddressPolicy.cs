@@ -1,7 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 
-namespace AutomataFlow.Automation.Network;
+namespace AutomataFlow.Application.Network;
 
 /// <summary>
 /// Decides whether an IP address is a publicly routable destination. Everything that is loopback, private,

@@ -1,4 +1,5 @@
 using System.Net;
+using AutomataFlow.Application.Network;
 using AutomataFlow.Automation.Network;
 
 namespace AutomataFlow.UnitTests.Automation;

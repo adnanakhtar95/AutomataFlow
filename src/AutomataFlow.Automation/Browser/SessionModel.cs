@@ -1,5 +1,5 @@
 using AutomataFlow.Application.Execution;
-using AutomataFlow.Automation.Network;
+using AutomataFlow.Application.Network;
 
 namespace AutomataFlow.Automation.Browser;
 

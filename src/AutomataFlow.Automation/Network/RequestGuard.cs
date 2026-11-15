@@ -1,3 +1,5 @@
+using AutomataFlow.Application.Network;
+
 namespace AutomataFlow.Automation.Network;
 
 /// <param name="Reason">Stable reason code when denied (see <see cref="EgressReasons"/>).</param>

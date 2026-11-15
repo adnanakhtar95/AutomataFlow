@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 
-namespace AutomataFlow.Automation.Network;
+namespace AutomataFlow.Application.Network;
 
 /// <summary>A canonical host: lower-case ASCII (punycode) name, or a parsed IP literal.</summary>
 /// <param name="Value">Canonical text used for rule matching (IPv6 without brackets).</param>

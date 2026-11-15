@@ -1,8 +1,8 @@
 using System.Net;
 using AutomataFlow.Application.Execution;
+using AutomataFlow.Application.Network;
 using AutomataFlow.Automation;
 using AutomataFlow.Automation.Browser;
-using AutomataFlow.Automation.Network;
 using AutomataFlow.Automation.Network.Proxy;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;

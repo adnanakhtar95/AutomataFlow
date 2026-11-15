@@ -1,6 +1,6 @@
 using System.Text;
+using AutomataFlow.Application.Network;
 using AutomataFlow.Automation.Browser;
-using AutomataFlow.Automation.Network;
 using AutomataFlow.Automation.Network.Proxy;
 
 namespace AutomataFlow.UnitTests.Automation;

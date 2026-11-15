@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace AutomataFlow.Automation.Network;
+namespace AutomataFlow.Application.Network;
 
 /// <summary>
 /// One authorized destination: scheme, host (exact, or <c>*.domain</c> for subdomains only) and port.

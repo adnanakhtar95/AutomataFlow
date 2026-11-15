@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
+using AutomataFlow.Application.Network;
 
 namespace AutomataFlow.Automation.Network.Proxy;
 
