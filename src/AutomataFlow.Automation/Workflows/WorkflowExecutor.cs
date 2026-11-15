@@ -209,7 +209,49 @@ public sealed class WorkflowExecutor : IWorkflowExecutor
         // ----- From here on this is an attempt with exactly one terminal outcome -----
         var scope = request.Scope with { AttemptNumber = slot.AttemptNumber };
         var run = new AttemptRun(request, slot, scope, bound, record, definition);
-        return await RunAttemptAsync(run, startedAt, cancellationToken);
+
+        // Phase 5: the attempt renews its own journal lease while it runs. If renewal fails (lease lost, fenced or the
+        // journal unreachable), the attempt is cancelled: a Worker that may have lost its lease must stop acting.
+        using var leaseGuard = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var stopRenewal = new CancellationTokenSource();
+        var renewal = RenewLeaseAsync(slot, leaseGuard, stopRenewal.Token);
+        try
+        {
+            return await RunAttemptAsync(run, startedAt, leaseGuard.Token);
+        }
+        finally
+        {
+            await stopRenewal.CancelAsync();
+            await renewal;
+        }
+    }
+
+    private async Task RenewLeaseAsync(AttemptReservation slot, CancellationTokenSource leaseGuard, CancellationToken stop)
+    {
+        var interval = _journal.Capabilities.LeaseLength / 3;
+        if (interval <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        while (!stop.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(interval, _clock, stop);
+                await _journal.RenewLeaseAsync(slot, stop);
+            }
+            catch (OperationCanceledException) when (stop.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                _logger.LogWarning("Attempt lease renewal failed; stopping the attempt {OperationId} {Attempt} {ExceptionType}", slot.OperationId, slot.AttemptNumber, ex.GetType().Name);
+                await leaseGuard.CancelAsync();
+                return;
+            }
+        }
     }
 
     private async Task<WorkflowExecutionResult> RunAttemptAsync(AttemptRun run, DateTimeOffset startedAt, CancellationToken cancellationToken)

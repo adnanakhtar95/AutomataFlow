@@ -140,6 +140,12 @@ public interface IAttemptJournal
     /// </summary>
     Task<DateTimeOffset> RenewLeaseAsync(AttemptReservation reservation, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Read-only history of an operation (after the same lease sweep every call performs) and the journal clock's now, for
+    /// scheduling decisions. Reserves nothing; the executor still decides admission atomically in <see cref="ReserveAsync"/>.
+    /// </summary>
+    Task<(ImmutableArray<AttemptSummary> History, DateTimeOffset Now)> ReadHistoryAsync(Guid organizationId, Guid operationId, CancellationToken cancellationToken);
+
     /// <summary>Records that the incarnation is alive (journal clock). Diagnostic input for the supervisor; it fences nothing.</summary>
     Task HeartbeatAsync(WorkerIncarnationId incarnation, CancellationToken cancellationToken);
 

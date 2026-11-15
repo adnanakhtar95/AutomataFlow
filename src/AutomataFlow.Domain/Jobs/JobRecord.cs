@@ -53,6 +53,9 @@ public sealed class JobRecord : IOrganizationOwned
 
     public DateTimeOffset? NextAttemptAt { get; private set; }
 
+    /// <summary>When the record first found an earlier attempt unfenced (FenceWaitSeconds counts from here).</summary>
+    public DateTimeOffset? AwaitingFenceSince { get; private set; }
+
     /// <summary>The Worker incarnation holding the claim.</summary>
     public Guid? LockedBy { get; private set; }
 

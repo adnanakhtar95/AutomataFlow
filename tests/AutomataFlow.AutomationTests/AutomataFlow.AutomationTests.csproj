@@ -20,6 +20,9 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\AutomataFlow.Automation\AutomataFlow.Automation.csproj" />
+    <!-- Phase 5: the real Worker composition and persistence, run in-process against DemoCrm and PostgreSQL. -->
+    <ProjectReference Include="..\..\src\AutomataFlow.Infrastructure\AutomataFlow.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\AutomataFlow.Worker\AutomataFlow.Worker.csproj" />
     <!-- ADR-027: build-only edge. DemoCrm is launched as a separate process; its assembly is never referenced. -->
     <ProjectReference Include="..\..\src\DemoCrm\DemoCrm.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>

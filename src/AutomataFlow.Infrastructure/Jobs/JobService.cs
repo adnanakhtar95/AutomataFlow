@@ -176,6 +176,7 @@ public sealed class JobService(AutomataFlowDbContext db, ICurrentUser user, Valu
             .ExecuteUpdateAsync(s => s.SetProperty(j => j.TotalRecords, total).SetProperty(j => j.InvalidRecords, invalid), cancellationToken);
         db.UsageRecords.Add(UsageRecord.Create(org, job.Id, UsageMetrics.RecordsImported, total, now));
         await db.SaveChangesAsync(cancellationToken);
+        await JobFinalizer.TryFinalizeAsync(db, org, job.Id, cancellationToken); // nothing runnable (all invalid / empty) => finished now
         await transaction.CommitAsync(cancellationToken);
         logger.LogInformation("Job created {JobId} {WorkflowVersionId} {TotalRecords} {InvalidRecords}", job.Id, version.Id, total, invalid);
         return ServiceResult<JobCreated>.Ok(new JobCreated(job.Id, total, invalid, false));

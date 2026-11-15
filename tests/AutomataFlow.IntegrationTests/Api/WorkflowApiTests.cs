@@ -196,7 +196,7 @@ public sealed class HostedPublicationTests
 /// Cross-tenant access to workflows and secrets (§7.1 layer 6). Runs against a normal Api AND against an Api whose
 /// query-filter backstop is OFF, proving the application layer scopes every access on its own.
 /// </summary>
-public abstract class WorkflowCrossTenantTests(PlatformApi api)
+public abstract partial class WorkflowCrossTenantTests(PlatformApi api)
 {
     [Fact]
     public async Task Another_organization_sees_404_for_every_workflow_operation_and_lists_never_leak()
@@ -237,6 +237,62 @@ public abstract class WorkflowCrossTenantTests(PlatformApi api)
         Assert.Equal(HttpStatusCode.NotFound, (await asB.GetAsync($"/api/v1/jobs/{jobId}/records")).StatusCode);
         Assert.DoesNotContain(jobId.ToString(), await asB.GetStringAsync("/api/v1/jobs"), StringComparison.OrdinalIgnoreCase);
         Assert.Equal(HttpStatusCode.NotFound, (await JobApiTests.UploadAsync(asB, version, JobApiTests.Header + "\n" + JobApiTests.Row(2) + "\n")).StatusCode);
+    }
+}
+
+public abstract partial class WorkflowCrossTenantTests
+{
+    [Fact]
+    public async Task Execution_details_are_served_to_their_organization_only_and_exports_neutralize_formulas()
+    {
+        var (_, a) = await api.RegisterAsync("exec-a");
+        var (_, b) = await api.RegisterAsync("exec-b");
+        var version = await JobApiTests.PublishedVersionAsync(api.Client(a.AccessToken), "a-exec");
+        var created = await JobApiTests.UploadAsync(api.Client(a.AccessToken), version, JobApiTests.Header + "\n" + JobApiTests.Row(1) + "\n" + JobApiTests.Row(2) + "\n");
+        var jobId = JsonNode.Parse(await created.Content.ReadAsStringAsync())!["jobId"]!.GetValue<Guid>();
+
+        // Simulate what a Worker persisted for A: an attempt with a log line and a screenshot artifact on disk.
+        Guid attemptId, artifactId, recordId;
+        await using (var db = api.Database.Context(a.Organization()))
+        {
+            var record = await db.JobRecords.OrderBy(r => r.RowNumber).FirstAsync(r => r.JobId == jobId);
+            recordId = record.Id;
+            await db.JobRecords.Where(r => r.Id == record.Id).ExecuteUpdateAsync(s => s.SetProperty(r => r.ResultJson, """{"note":"=HYPERLINK(\"http://evil.test\")"}"""));
+            var attempt = AutomataFlow.Domain.Jobs.JobAttempt.Start(a.Organization(), jobId, record.Id, 1, AutomataFlow.Domain.Jobs.RecordIntent.Normal, Guid.NewGuid(), DateTimeOffset.UtcNow);
+            attempt.Complete(AutomataFlow.Domain.Jobs.JobAttemptStatus.Succeeded, null, null, true, true, null, DateTimeOffset.UtcNow);
+            db.JobAttempts.Add(attempt);
+            db.ExecutionLogs.Add(AutomataFlow.Domain.Jobs.ExecutionLog.Create(a.Organization(), attempt.Id, 0, DateTimeOffset.UtcNow, "Information", "StepSucceeded", "submit", "ok", null));
+            var key = $"{a.Organization():N}/{jobId:N}/{record.Id:N}/1/{Guid.NewGuid():N}.png";
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(api.ArtifactsRoot, key))!);
+            await File.WriteAllBytesAsync(Path.Combine(api.ArtifactsRoot, key), [0x89, 0x50, 0x4E, 0x47]);
+            var artifact = AutomataFlow.Domain.Jobs.ExecutionArtifact.Create(Guid.NewGuid(), a.Organization(), attempt.Id, "Screenshot", key, "confirmation.png", "image/png", 4, "abc", DateTimeOffset.UtcNow);
+            db.ExecutionArtifacts.Add(artifact);
+            await db.SaveChangesAsync();
+            (attemptId, artifactId) = (attempt.Id, artifact.Id);
+        }
+
+        var asA = api.Client(a.AccessToken);
+        var download = await asA.GetAsync($"/api/v1/artifacts/{artifactId}");
+        Assert.Equal(HttpStatusCode.OK, download.StatusCode);
+        Assert.Equal("application/octet-stream", download.Content.Headers.ContentType!.MediaType);
+        Assert.Equal("nosniff", download.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.Equal(4, (await download.Content.ReadAsByteArrayAsync()).Length);
+        Assert.Contains("StepSucceeded", await asA.GetStringAsync($"/api/v1/attempts/{attemptId}/logs"), StringComparison.Ordinal);
+        Assert.Contains("confirmation.png", await asA.GetStringAsync($"/api/v1/jobs/{jobId}/records/{recordId}/attempts"), StringComparison.Ordinal);
+        var csv = await asA.GetStringAsync($"/api/v1/jobs/{jobId}/results.csv");
+        Assert.Contains("\"'=HYPERLINK(\"\"http://evil.test\"\")\"", csv, StringComparison.Ordinal); // neutralized and quoted
+        Assert.DoesNotContain("ada1@example.test", csv, StringComparison.Ordinal);
+
+        var asB = api.Client(b.AccessToken);
+        Assert.Equal(HttpStatusCode.NotFound, (await asB.GetAsync($"/api/v1/artifacts/{artifactId}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await asB.GetAsync($"/api/v1/attempts/{attemptId}/logs")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await asB.GetAsync($"/api/v1/jobs/{jobId}/records/{recordId}/attempts")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await asB.GetAsync($"/api/v1/jobs/{jobId}/results.csv")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await asB.PostAsync($"/api/v1/jobs/{jobId}/cancel", null)).StatusCode);
+
+        Assert.Equal(HttpStatusCode.Accepted, (await asA.PostAsync($"/api/v1/jobs/{jobId}/cancel", null)).StatusCode);
+        await using var check = api.Database.Context(a.Organization());
+        Assert.Equal("Cancelled", (await check.Jobs.SingleAsync(j => j.Id == jobId)).Status.ToString()); // no journal history: cancelled at once
     }
 }
 

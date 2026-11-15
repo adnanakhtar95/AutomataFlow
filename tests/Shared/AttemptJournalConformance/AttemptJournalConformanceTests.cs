@@ -268,6 +268,22 @@ public abstract class AttemptJournalConformanceTests
     }
 
     [Fact]
+    public async Task Reading_the_history_reserves_nothing_sweeps_expiry_and_is_organization_scoped()
+    {
+        var (journal, a, b) = await SetUpAsync();
+        var operation = Guid.NewGuid();
+        await UnfencedAttemptAsync(journal, a, operation);
+
+        var (history, now) = await journal.ReadHistoryAsync(Org, operation, default);
+        Assert.Equal(Clock.GetUtcNow(), now);
+        var entry = Assert.Single(history);
+        Assert.Equal((AttemptState.Abandoned, SideEffectState.Started), (entry.State, entry.SideEffect));
+        Assert.Empty((await journal.ReadHistoryAsync(Guid.NewGuid(), operation, default)).History);
+        Assert.Single((await journal.ReadHistoryAsync(Org, operation, default)).History); // still one: nothing was reserved
+        Assert.Equal(ReservationStatus.AwaitingFence, (await ProbeAsync(journal, b, operation)).Status);
+    }
+
+    [Fact]
     public async Task Capabilities_report_the_lease_and_margin_in_use()
     {
         var (journal, _, _) = await SetUpAsync();

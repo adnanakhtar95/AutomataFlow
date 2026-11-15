@@ -43,16 +43,29 @@ public static class DependencyInjection
 
         services.TryAddSingleton(TimeProvider.System);
         services.AddSingleton<ValueProtection>();
-        services.AddScoped<SecretService>();
         services.AddScoped<OrganizationSecretProvider>();
-        services.AddScoped<WorkflowService>();
-        services.AddScoped<Jobs.JobService>();
+        services.AddScoped<Jobs.AttemptRecorder>();
+        services.AddOptions<Jobs.ArtifactStorageOptions>().Bind(configuration.GetSection(Jobs.ArtifactStorageOptions.SectionName));
+        services.AddSingleton<Jobs.FileSystemArtifactStore>();
+        services.AddKeyedSingleton(QueueDataSourceKey, (_, _) => Npgsql.NpgsqlDataSource.Create(connectionString));
+        services.AddSingleton(sp => new Jobs.RecordDispatcher(sp.GetRequiredKeyedService<Npgsql.NpgsqlDataSource>(QueueDataSourceKey)));
         services.AddOptions<Jobs.ImportOptions>().Bind(configuration.GetSection(Jobs.ImportOptions.SectionName))
             .Validate(o => o.MaxBytes is > 0 and <= 100L * 1024 * 1024 && o.MaxRecords is > 0 and <= 1_000_000 && o.MaxColumns is > 0 and <= 100 && o.MaxCellChars is > 0 and <= 10_000,
                 "Imports limits are out of range (MaxBytes <= 100 MB, MaxRecords <= 1,000,000, MaxColumns <= 100, MaxCellChars <= 10,000).")
             .ValidateOnStart();
         services.AddOptions<PlatformOptions>().Bind(configuration.GetSection(PlatformOptions.SectionName));
 
+        return services;
+    }
+
+    /// <summary>Api use cases that act for an authenticated caller (they require <c>ICurrentUser</c>).</summary>
+    public static IServiceCollection AddPlatformServices(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        services.AddScoped<SecretService>();
+        services.AddScoped<WorkflowService>();
+        services.AddScoped<Jobs.JobService>();
+        services.AddScoped<Jobs.ExecutionQueryService>();
         return services;
     }
 
@@ -105,4 +118,5 @@ public static class DependencyInjection
     }
 
     private const string JournalDataSourceKey = "attempt-journal";
+    private const string QueueDataSourceKey = "job-queue";
 }

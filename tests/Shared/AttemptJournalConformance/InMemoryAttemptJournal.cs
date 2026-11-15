@@ -212,6 +212,17 @@ public class InMemoryAttemptJournal(TimeProvider clock, TimeSpan? leaseLength = 
 
     public Task HeartbeatAsync(WorkerIncarnationId incarnation, CancellationToken cancellationToken) => Task.CompletedTask;
 
+    public Task<(ImmutableArray<AttemptSummary> History, DateTimeOffset Now)> ReadHistoryAsync(Guid organizationId, Guid operationId, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            var now = clock.GetUtcNow();
+            var entries = EntriesFor(organizationId, operationId);
+            Sweep(entries, now);
+            return Task.FromResult((entries.Select(e => e.ToSummary(operationId)).ToImmutableArray(), now));
+        }
+    }
+
     public virtual Task ReleaseAsync(AttemptReservation reservation, CancellationToken cancellationToken)
     {
         lock (_gate)

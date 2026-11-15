@@ -102,6 +102,10 @@ public sealed class PostgresAttemptJournal : IAttemptJournal
             return true;
         }, cancellationToken);
 
+    public Task<(ImmutableArray<AttemptSummary> History, DateTimeOffset Now)> ReadHistoryAsync(Guid organizationId, Guid operationId, CancellationToken cancellationToken) =>
+        InTransactionAsync((organizationId, operationId), async (tx, now) =>
+            ((await LoadAsync(tx, organizationId, operationId, cancellationToken)).Select(e => e.Summary(operationId)).ToImmutableArray(), now), cancellationToken);
+
     public Task<AttemptReservationResult> ReserveAsync(Guid organizationId, Guid operationId, ExecutionIntent intent, WorkerIncarnationId incarnation, CancellationToken cancellationToken) =>
         InTransactionAsync((organizationId, operationId), async (tx, now) =>
         {

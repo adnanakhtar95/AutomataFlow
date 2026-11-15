@@ -666,6 +666,49 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
   Defaults: a 180 s lease and a 10 s margin (`Journal:*`).
 - **Architecture rule:** the Phase 4 test "no production journal" becomes, as §7.4 specifies, "the only production journal is `PostgresAttemptJournal` in Infrastructure, durable and fencing". Application and Automation contain none.
 - **Proof:** the shared conformance suite runs **unchanged** against PostgreSQL, including F8 with 1,000 real concurrent races, plus two new shared tests for renewal and capabilities. PostgreSQL-specific tests cover: 12 connections racing over 25 operations (exactly one admitted each time); the database clock; fencing across two journal instances; append-only refusals; a derived `Blocking` that cannot be overwritten; a connection killed just before COMMIT (reported unavailable, and here provably not recorded).
+## ADR-072 — Worker execution platform (Phase 5 step 6)
+**Status:** Accepted (2026-11-15; implements docs/ARCHITECTURE.md §5 with the safety rules of ADR-045 to ADR-060).
+- **Claiming:**
+  - each candidate job row is locked `FOR UPDATE SKIP LOCKED`, so per-job `MaxConcurrency` holds across Workers (tested with two Workers: never more than one Running);
+  - records are claimed with `SKIP LOCKED` and a claim lease, renewed by the heartbeat;
+  - expired claims are returned to Pending by a recovery loop;
+  - these are the Worker's reviewed cross-organization queries (explicit SQL; they move queue state only and never read values), so all processing runs inside the record's own organization scope;
+  - `Worker:MaxConcurrentAttempts` bounds browser sessions per Worker.
+- **Processing:**
+  - the pinned version is re-loaded with hash verification before **every** attempt, and a tampered definition fails the record without executing;
+  - the real executor runs the attempt, and its admission guard re-evaluates the journal;
+  - the Worker then reads the journal's fresh history (`ReadHistoryAsync`, a new read-only port call) and asks the `RepeatSafetyEvaluator` for the next step;
+  - **`RecordScheduler`** (Application, pure) maps the result and decision to the record's next state:
+    - resolutions end the record;
+    - `Allowed` retries with exponential backoff up to `MaxAttempts`; exhausted attempts with an open ambiguity give **NeedsReview, never Failed**;
+    - `ReconcileRequired` / `ReconcileTooEarly` schedule reconcile attempts;
+    - `AwaitingFence` is re-checked and becomes **NeedsReview after `FenceWaitSeconds`**;
+    - an unreadable history waits instead of deciding;
+    - a cancelled job never hides an ambiguity.
+  - The scheduler never authorizes anything itself; the executor's guard stays authoritative.
+- **Attempt lease renewal:** the executor renews its own reservation's journal lease every third of the lease length while the attempt runs. A failed renewal cancels the attempt (Cancelled, or Indeterminate after a side effect).
+- **Persistence after an attempt:** one transaction, conditional on this Worker still holding the claim, stores:
+  - the record transition;
+  - `JobAttempt` (status, codes, step records without values);
+  - the buffered `ExecutionLogs` (already redacted; at most 2,000 per attempt, overflow counted);
+  - `ExecutionArtifacts`;
+  - usage (`attempts.started`);
+  - job finalization (Completed / CompletedWithErrors / Failed / Cancelled, race-safe).
+  
+  A Worker that lost its claim stores nothing; the journal keeps the truth.
+- **Artifacts:** a file store with keys generated only by the platform (`org/job/record/attempt/random-id.ext`), validated by shape and root on read. They are served only by an authorized endpoint as `application/octet-stream` attachments with `nosniff`.
+- **Cancellation:** a Pending record is cancelled directly only if its operation has **no journal history**. Any record with history (possibly an unresolved side effect of a crashed Worker) is resolved by the Worker through the evaluator. Running attempts observe cancellation through the heartbeat.
+- **Exports:** results CSV (row, operation id, status, error code, result fields; never inputs) with spreadsheet-formula neutralization.
+- **Fail-closed startup (ADR-058 rule 2):** the Worker refuses to execute unless:
+  - the journal is durable and fencing, and its lease is at least 120 s + margin;
+  - the server has `fsync` on;
+  - `DataProtection:KeysDirectory` and `Artifacts:RootDirectory` are configured;
+  - a containment handshake (step 7) succeeds;
+  - the incarnation is registered.
+  
+  The executor is resolved lazily, so nothing can execute before these checks pass.
+- **Test layering:** AutomationTests may now also reference Infrastructure and the Worker, to run the real Worker composition end to end against DemoCrm. It still never references the Api. A separate end-to-end project could not reference DemoCrm (ADR-027).
+- **DI split:** Api use cases that need an authenticated caller are registered by `AddPlatformServices` (Api only); the Worker composition is `AddWorkerServices`.
 ## Resolved from the approval round (2026-11-11)
 1. SDK: selected from inspection, not blindly pinned (ADR-004). 2. PostgreSQL: Docker `postgres:18`, port 5433, volume (ADR-013). 3. Git initialized; commit after each verified phase; no secrets or generated artifacts. 4. Identity + JWT (ADR-010). 5. Hand-written validators (ADR-016). 6. Razor Pages Demo CRM (ADR-011). 7. Folder layout `src/ tests/ web/ deploy/ docs/`, React in `web/automataflow-web`. 8. 16-day target, 16–20 realistic; quality over deadline. 9. Frontend libraries deferred (ADR-019). 10. Playwright Chromium download approved for Phase 3.
 

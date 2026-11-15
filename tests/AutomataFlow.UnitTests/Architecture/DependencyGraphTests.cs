@@ -134,10 +134,15 @@ public class DependencyGraphTests
         Assert.DoesNotContain("DemoCrm", Graph.TransitiveReferences("AutomataFlow.IntegrationTests"));
     }
 
+    /// <summary>
+    /// AutomationTests is the only test project that may drive DemoCrm besides DemoCrm.Tests (ADR-027). Since Phase 5
+    /// (ADR-072) it also composes the real Worker and persistence for end-to-end runs; it still never references the Api.
+    /// </summary>
     [Fact]
-    public void AutomationTests_may_reference_only_Automation_and_DemoCrm()
+    public void AutomationTests_may_reference_only_Automation_DemoCrm_and_the_Worker_composition()
     {
-        var allowed = new[] { "AutomataFlow.Automation", "DemoCrm" };
+        var allowed = new[] { "AutomataFlow.Automation", "DemoCrm", "AutomataFlow.Infrastructure", "AutomataFlow.Worker" };
+        Assert.DoesNotContain("AutomataFlow.Api", Graph.TransitiveReferences("AutomataFlow.AutomationTests"));
 
         Assert.All(Graph.DirectReferences("AutomataFlow.AutomationTests"), r => Assert.Contains(r, allowed));
         Assert.Contains("AutomataFlow.Automation", Graph.DirectReferences("AutomataFlow.AutomationTests"));

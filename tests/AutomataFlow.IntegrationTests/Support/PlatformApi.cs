@@ -17,12 +17,14 @@ public sealed class PlatformApi : IAsyncLifetime
 
     public MigratedDatabase Database { get; } = new();
 
+    public string ArtifactsRoot { get; } = Directory.CreateTempSubdirectory("af-api-artifacts-").FullName;
+
     internal ApiFactory Factory { get; private set; } = null!;
 
     public async Task InitializeAsync()
     {
         await Database.InitializeAsync();
-        var settings = new Dictionary<string, string?> { ["Auth:PermitsPerMinute"] = "100000" };
+        var settings = new Dictionary<string, string?> { ["Auth:PermitsPerMinute"] = "100000", ["Artifacts:RootDirectory"] = ArtifactsRoot };
         foreach (var (key, value) in Settings)
         {
             settings[key] = value;
