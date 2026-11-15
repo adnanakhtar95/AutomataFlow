@@ -158,7 +158,9 @@ Every number below is a constant in `WorkflowLimits`. The validator, the runtime
 
 | Limit | Value | Enforced by |
 |---|---|---|
-| Definition size | 262,144 bytes (256 KB) | parser |
+| Definition size | 262,144 bytes (256 KB), checked before any parsing | parser |
+| JSON nesting depth (objects and arrays) | 32 | parser |
+| Any JSON string value / any property name (decoded length) | 2,048 / 64 chars | parser |
 | Steps (total, including setup, reconcile and branches) | 200 | validator |
 | Step nesting depth (condition branches) | 3 | validator |
 | Condition expression depth / predicates per expression / children per `all`/`any` | 5 / 20 / 10 (each `if` and each `transientWhen` is one expression) | validator |
@@ -1780,7 +1782,14 @@ It runs against `InMemoryAttemptJournal` in Phase 4, and unchanged against Postg
    - `QueryRowsAsync` is bounded and script-free;
    - the egress revocation barrier meets all four conditions; every upstream send is admitted through the write gate, so no send begins after Lr (§7.6; V1–V12, WG1–WG6); the horizon races hold (H1–H4); the connection ledger with OS identity is written before any payload; `EgressRevoked` is true only for a completed barrier;
    - private-network access comes only from trusted Development server configuration.
-4. [ ] Strict, versioned parser with limits from `WorkflowLimits`; unknown properties, schema versions, loops and regular expressions rejected; non-integer numbers rejected.
+4. [ ] Strict, versioned parser with limits from `WorkflowLimits`; unknown properties, schema versions, loops and regular expressions rejected; non-integer numbers rejected. (Step 3 implemented 2026-11-15, pending review:
+   - `StrictJsonParser` (size before parsing, BOM, comments, trailing commas and content, depth, duplicate names after unescaping, integer-only numbers including `-0`, lone surrogates, string and property-name lengths);
+   - `WorkflowDefinitionParser` dispatching on `schemaVersion`, with the schemaVersion 1 binder: every property set is closed, loop/regex keys are rejected anywhere (including inside `config`), and all errors are reported with JSON paths;
+   - `CanonicalJson` and `ValidatedWorkflow` (golden bytes and hash computed by an independent reference implementation); `WorkflowVersion` lifecycle rules in Domain.
+
+   **Deliberately left to later steps:** `config` is kept as an immutable raw object and typed per action in step 5; `allowedHosts` gets structural checks only (canonical origins and templates in step 4); `sideEffect`/`onError`/idempotency placement, the side-effect timeout minimum, finalization and condition-branch step counting are step 5.
+
+   **Hash semantics:** the hash covers the definition as written after parsing, so an explicit default such as `"timeoutSeconds": 120` is a different definition from an omitted one, while formatting, property order and escaping are not.)
 5. [ ] Hand-written validator covers, recursively for nested branches:
    - structure and all 13 action configs;
    - templates, dominance, URL grammar and canonical origins, sink rules, parameters;
