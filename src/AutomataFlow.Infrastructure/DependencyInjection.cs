@@ -81,4 +81,28 @@ public static class DependencyInjection
         services.AddScoped<AccountService>();
         return services;
     }
+
+    /// <summary>
+    /// The durable, fencing PostgreSQL attempt journal (ADR-071) on its own data source. Production registration always uses
+    /// the database clock; there is no configuration that replaces it.
+    /// </summary>
+    public static IServiceCollection AddAttemptJournal(this IServiceCollection services, IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configuration);
+        var connectionString = configuration.GetConnectionString(ConnectionStringName)
+            ?? throw new InvalidOperationException($"Connection string 'ConnectionStrings:{ConnectionStringName}' is not configured.");
+        services.AddOptions<Persistence.Journal.AttemptJournalOptions>().Bind(configuration.GetSection(Persistence.Journal.AttemptJournalOptions.SectionName))
+            .Validate(o => o.LeaseSeconds is >= 30 and <= 3_600 && o.LeaseSafetyMarginSeconds is >= 1 and <= 300, "Journal:LeaseSeconds must be 30-3600 and LeaseSafetyMarginSeconds 1-300.")
+            .ValidateOnStart();
+        services.AddKeyedSingleton(JournalDataSourceKey, (_, _) => Npgsql.NpgsqlDataSource.Create(connectionString));
+        services.AddSingleton<Persistence.Journal.PostgresAttemptJournal>(sp => new Persistence.Journal.PostgresAttemptJournal(
+            sp.GetRequiredKeyedService<Npgsql.NpgsqlDataSource>(JournalDataSourceKey),
+            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Persistence.Journal.AttemptJournalOptions>>(),
+            sp.GetService<Microsoft.Extensions.Logging.ILogger<Persistence.Journal.PostgresAttemptJournal>>()));
+        services.AddSingleton<Application.Workflows.Execution.IAttemptJournal>(sp => sp.GetRequiredService<Persistence.Journal.PostgresAttemptJournal>());
+        return services;
+    }
+
+    private const string JournalDataSourceKey = "attempt-journal";
 }

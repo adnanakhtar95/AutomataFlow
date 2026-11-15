@@ -247,6 +247,34 @@ public abstract class AttemptJournalConformanceTests
         }
     }
 
+    /// <summary>Lease renewal (Phase 5 heartbeat): extends a valid lease from journal now; never revives a lost one.</summary>
+    [Fact]
+    public async Task Lease_renewal_extends_a_valid_lease_and_never_revives_a_lost_one()
+    {
+        var (journal, a, b) = await SetUpAsync();
+        var operation = Guid.NewGuid();
+        var reservation = await StartAsync(journal, a, operation);
+        Clock.Advance(Lease - TimeSpan.FromSeconds(5));
+
+        Assert.Equal(Clock.GetUtcNow() + Lease, await journal.RenewLeaseAsync(reservation, default));
+        Clock.Advance(TimeSpan.FromSeconds(30)); // past the ORIGINAL expiry, inside the renewed one (30 s left >= 10 s step + 10 s margin)
+        await journal.SideEffectStartingAsync(reservation, "submit", TimeSpan.FromSeconds(10), default);
+        Assert.Equal(ReservationStatus.InFlight, (await ProbeAsync(journal, b, operation)).Status);
+
+        var other = await StartAsync(journal, a, Guid.NewGuid());
+        Clock.Advance(Lease + TimeSpan.FromSeconds(1));
+        Assert.Equal(JournalErrorCodes.Fenced, (await Assert.ThrowsAsync<AttemptJournalException>(() => journal.RenewLeaseAsync(other, default))).Code);
+        Assert.Equal(JournalErrorCodes.Fenced, (await Assert.ThrowsAsync<AttemptJournalException>(() => journal.RenewLeaseAsync(other with { FencingToken = other.FencingToken + 99 }, default))).Code);
+    }
+
+    [Fact]
+    public async Task Capabilities_report_the_lease_and_margin_in_use()
+    {
+        var (journal, _, _) = await SetUpAsync();
+        Assert.Equal((Lease, Margin), (journal.Capabilities.LeaseLength, journal.Capabilities.LeaseSafetyMargin));
+        Assert.True(journal.Capabilities.SupportsFencing);
+    }
+
     // ----- Completion -----
 
     [Fact]

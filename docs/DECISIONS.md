@@ -643,6 +643,29 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
   - a different request with the same key gets 409;
   - concurrent requests with the same key are serialized by the unique index, and the losers answer as replays (tested with 6 concurrent uploads: one job, 50 records).
 - **Reads:** job views count records by status. Record listings return row number, OperationId, status, attempts, error code, result and validation codes, and **never input values**.
+## ADR-071 — The PostgreSQL attempt journal (Phase 5 step 5)
+**Status:** Accepted (2026-11-15; implements ADR-049, ADR-056, ADR-058 and ADR-059 as specified in PHASE4_PLAN §7.2 and §7.4).
+- **One transaction per operation:**
+  - `SET LOCAL synchronous_commit = on`, so the commit is durable whatever the server default; the Worker additionally checks `fsync = on` at startup;
+  - a transaction-scoped advisory lock on (organization, operation), and **only then** the clock is read (this is what F8 needs);
+  - a lease sweep (expired Reserved entries deleted, expired Started entries → Abandoned);
+  - the decision, then the write.
+  
+  Every write after `ReserveAsync` is fenced on the fencing token, the expected state and the lease, by the journal clock.
+- **Clock:** the database's `clock_timestamp()`, taken inside the committing transaction after all checks. That is the latest point before commit that can be observed; the commit itself follows immediately. A `TimeProvider` override exists only through an internal constructor used by the conformance suite.
+- **Invariants enforced by PostgreSQL:**
+  - a trigger derives `Blocking` from the row (Reserved, Started, or a side effect that is neither executor-fenced nor externally fenced), and `UX_AttemptJournal_OneBlocking` allows one such entry per operation;
+  - a guard trigger makes history append-only: only never-started Reserved rows can be deleted; identity is immutable; states only move forward; a recorded start, checkpoint, observation, abandonment, finish, outcome or fence never changes; `ExecutionFenced` never goes back to false (SQLSTATE `AF001`).
+- **Fence confirmation:** it locks every operation of the incarnation in a fixed order. Then, in one transaction, it validates the evidence (`FenceEvidenceValidator`), deletes Reserved entries, abandons Started ones and fences every unfenced entry at the commit-time clock, and audits **every** call, accepted or rejected, in `FenceConfirmations`.
+- **Ambiguous commits:** any failure during COMMIT surfaces as `JournalUnavailable` ("outcome unknown") and is never treated as success or failure. Callers stay conservative: the executor does not dispatch without a confirmed checkpoint; a commit that did land leaves a checkpoint, which keeps the attempt blocked until it is fenced.
+- **Port additions (additive, implemented by the in-memory journal and covered by the shared suite):**
+  - `RenewLeaseAsync`: fenced; it never revives a lost lease;
+  - `HeartbeatAsync`: incarnation liveness for the supervisor; it fences nothing;
+  - `JournalCapabilities.LeaseLength` and `LeaseSafetyMargin`, for the Worker's startup check.
+
+  Defaults: a 180 s lease and a 10 s margin (`Journal:*`).
+- **Architecture rule:** the Phase 4 test "no production journal" becomes, as §7.4 specifies, "the only production journal is `PostgresAttemptJournal` in Infrastructure, durable and fencing". Application and Automation contain none.
+- **Proof:** the shared conformance suite runs **unchanged** against PostgreSQL, including F8 with 1,000 real concurrent races, plus two new shared tests for renewal and capabilities. PostgreSQL-specific tests cover: 12 connections racing over 25 operations (exactly one admitted each time); the database clock; fencing across two journal instances; append-only refusals; a derived `Blocking` that cannot be overwritten; a connection killed just before COMMIT (reported unavailable, and here provably not recorded).
 ## Resolved from the approval round (2026-11-11)
 1. SDK: selected from inspection, not blindly pinned (ADR-004). 2. PostgreSQL: Docker `postgres:18`, port 5433, volume (ADR-013). 3. Git initialized; commit after each verified phase; no secrets or generated artifacts. 4. Identity + JWT (ADR-010). 5. Hand-written validators (ADR-016). 6. Razor Pages Demo CRM (ADR-011). 7. Folder layout `src/ tests/ web/ deploy/ docs/`, React in `web/automataflow-web`. 8. 16-day target, 16–20 realistic; quality over deadline. 9. Frontend libraries deferred (ADR-019). 10. Playwright Chromium download approved for Phase 3.
 

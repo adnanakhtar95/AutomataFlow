@@ -36,11 +36,12 @@ public class WorkflowDefinitionSourceTests
     }
 
     /// <summary>
-    /// ADR-058 fail-closed rule 1: no production assembly contains an attempt journal in Phase 4 (the in-memory journal is
-    /// test-only), so no real execution can rely on a non-durable journal.
+    /// ADR-058 fail-closed rule 1 (as specified for Phase 5 in §7.4): the ONLY production attempt journal is the durable,
+    /// fencing PostgreSQL journal in Infrastructure. The in-memory journal stays test-only, so no real execution can rely on
+    /// a non-durable journal; Application and Automation contain no implementation at all.
     /// </summary>
     [Fact]
-    public void No_production_code_implements_the_attempt_journal()
+    public void The_only_production_attempt_journal_is_the_PostgreSQL_journal()
     {
         var sources = Directory.EnumerateFiles(Path.Combine(ProjectGraph.RepositoryRoot, "src"), "*.cs", SearchOption.AllDirectories)
             .Where(f => !f.Contains(Path.DirectorySeparatorChar + "obj" + Path.DirectorySeparatorChar, StringComparison.Ordinal)
@@ -50,9 +51,10 @@ public class WorkflowDefinitionSourceTests
 
         var implementations = sources
             .Where(f => Regex.IsMatch(File.ReadAllText(f), @"(class|record|struct)\s+\w+[^{;]*:[^{;]*\bIAttemptJournal\b"))
-            .Select(Path.GetFileName)
+            .Select(f => Path.GetRelativePath(ProjectGraph.RepositoryRoot, f).Replace('\\', '/'))
             .ToList();
-        Assert.Empty(implementations);
+        Assert.Equal(["src/AutomataFlow.Infrastructure/Persistence/Journal/PostgresAttemptJournal.cs"], implementations);
+        Assert.Contains("IsDurable: true, SupportsFencing: true", File.ReadAllText(Path.Combine(ProjectGraph.RepositoryRoot, implementations[0])), StringComparison.Ordinal);
 
         var loaded = new[] { typeof(AutomataFlow.Application.Workflows.Execution.IAttemptJournal).Assembly, typeof(AutomataFlow.Automation.Network.RequestGuard).Assembly };
         Assert.DoesNotContain(loaded.SelectMany(a => a.GetTypes()), t => !t.IsInterface && typeof(AutomataFlow.Application.Workflows.Execution.IAttemptJournal).IsAssignableFrom(t));

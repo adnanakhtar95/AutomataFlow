@@ -27,8 +27,11 @@ public sealed record WorkerIncarnation(
     ContainmentUnit Unit,
     string ConnectionLedger);
 
-/// <summary>Journal properties; production requires both (§7.4, ADR-058).</summary>
-public sealed record JournalCapabilities(bool IsDurable, bool SupportsFencing);
+/// <summary>
+/// Journal properties; production requires durability and fencing (§7.4, ADR-058), and a lease that covers the longest
+/// permitted side-effect step (120 s) plus <see cref="LeaseSafetyMargin"/>. Zero lease values fail every startup check.
+/// </summary>
+public sealed record JournalCapabilities(bool IsDurable, bool SupportsFencing, TimeSpan LeaseLength = default, TimeSpan LeaseSafetyMargin = default);
 
 /// <summary>A reserved attempt slot with its fencing token (§7.2).</summary>
 public sealed record AttemptReservation(Guid OrganizationId, Guid OperationId, int AttemptNumber, ExecutionIntent Intent, long FencingToken, WorkerIncarnationId Incarnation);
@@ -130,6 +133,15 @@ public interface IAttemptJournal
     /// information (outcome, fence); it never admits anything. Returns <c>FinishedAt</c> (journal clock).
     /// </summary>
     Task<DateTimeOffset> CompleteAsync(AttemptReservation reservation, AttemptCompletion completion, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Extends a still-valid lease (Reserved or Started, same fencing token, not expired by the journal clock) to journal now
+    /// + lease length and returns the new expiry. Fenced: a lost lease is never revived (Phase 5 Worker heartbeat).
+    /// </summary>
+    Task<DateTimeOffset> RenewLeaseAsync(AttemptReservation reservation, CancellationToken cancellationToken);
+
+    /// <summary>Records that the incarnation is alive (journal clock). Diagnostic input for the supervisor; it fences nothing.</summary>
+    Task HeartbeatAsync(WorkerIncarnationId incarnation, CancellationToken cancellationToken);
 
     /// <summary>Reserved → removed (refusals before <c>StartAsync</c>); a released reservation never becomes an attempt.</summary>
     Task ReleaseAsync(AttemptReservation reservation, CancellationToken cancellationToken);

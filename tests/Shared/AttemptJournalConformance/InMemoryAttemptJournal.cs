@@ -52,7 +52,7 @@ public class InMemoryAttemptJournal(TimeProvider clock, TimeSpan? leaseLength = 
 
     public TimeSpan LeaseSafetyMargin { get; } = leaseSafetyMargin ?? TimeSpan.FromSeconds(10);
 
-    public JournalCapabilities Capabilities { get; } = new(IsDurable: false, SupportsFencing: true);
+    public JournalCapabilities Capabilities => new(IsDurable: false, SupportsFencing: true, LeaseLength, LeaseSafetyMargin);
 
     /// <summary>Diagnostics recorded with a fence (kill-request time, supervisor observation time); never fence times.</summary>
     public IReadOnlyList<(WorkerIncarnationId Incarnation, DateTimeOffset At)> KillRequests
@@ -192,6 +192,26 @@ public class InMemoryAttemptJournal(TimeProvider clock, TimeSpan? leaseLength = 
         }
     }
 
+    public virtual Task<DateTimeOffset> RenewLeaseAsync(AttemptReservation reservation, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            var now = clock.GetUtcNow();
+            var entries = EntriesFor(reservation.OrganizationId, reservation.OperationId);
+            Sweep(entries, now);
+            var entry = entries.SingleOrDefault(e => e.AttemptNumber == reservation.AttemptNumber && e.Token == reservation.FencingToken);
+            if (entry is null || entry.State is not (AttemptState.Reserved or AttemptState.Started) || entry.LeaseExpiresAt <= now)
+            {
+                throw new AttemptJournalException(JournalErrorCodes.Fenced, "The reservation is no longer valid (lease lost or fenced).");
+            }
+
+            entry.LeaseExpiresAt = now + LeaseLength;
+            return Task.FromResult(entry.LeaseExpiresAt);
+        }
+    }
+
+    public Task HeartbeatAsync(WorkerIncarnationId incarnation, CancellationToken cancellationToken) => Task.CompletedTask;
+
     public virtual Task ReleaseAsync(AttemptReservation reservation, CancellationToken cancellationToken)
     {
         lock (_gate)
@@ -321,7 +341,7 @@ public class InMemoryAttemptJournal(TimeProvider clock, TimeSpan? leaseLength = 
 
         public long Token { get; init; }
 
-        public DateTimeOffset LeaseExpiresAt { get; init; }
+        public DateTimeOffset LeaseExpiresAt { get; set; }
 
         public AttemptSnapshot? Snapshot { get; set; }
 

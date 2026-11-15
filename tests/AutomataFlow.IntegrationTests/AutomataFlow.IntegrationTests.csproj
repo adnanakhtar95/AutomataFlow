@@ -12,6 +12,10 @@
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
   </ItemGroup>
   <ItemGroup>
+    <!-- The shared journal conformance suite (ADR-058), run here unchanged against PostgreSQL. -->
+    <Compile Include="..\Shared\AttemptJournalConformance\**\*.cs" Link="Shared\AttemptJournalConformance\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\src\AutomataFlow.Api\AutomataFlow.Api.csproj" />
     <ProjectReference Include="..\..\src\AutomataFlow.Infrastructure\AutomataFlow.Infrastructure.csproj" />
   </ItemGroup>
