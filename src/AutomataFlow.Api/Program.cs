@@ -14,6 +14,7 @@ builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfig
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddPlatformAuth(builder.Configuration);
 builder.Services.AddPlatformServices();
+builder.Services.AddAttemptJournal(builder.Configuration); // platform-operator fence confirmation only; the Api never executes
 
 builder.Services.AddControllers()
     .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));

@@ -56,6 +56,15 @@ public sealed class WorkerExecutionTests(BrowserFixture fixture)
         Assert.StartsWith(rig.Organization.ToString("N") + "/", screenshot.StorageKey, StringComparison.Ordinal);
         Assert.True(File.Exists(Path.Combine(rig.ArtifactsRoot, screenshot.StorageKey)));
         Assert.Equal(2, await rig.QueryAsync(db => db.UsageRecords.Where(u => u.Metric == UsageMetrics.AttemptsStarted).SumAsync(u => u.Quantity)));
+
+        // No credential and no customer value in stored execution logs or in the Worker's own logs.
+        var stored = (await rig.QueryAsync(db => db.ExecutionLogs.AsNoTracking().Select(l => new { l.Message, l.PropertiesJson }).ToListAsync()))
+            .Select(l => l.Message + " " + l.PropertiesJson).ToList();
+        foreach (var value in new[] { "DemoPass-2026!", email })
+        {
+            Assert.DoesNotContain(stored, s => s.Contains(value, StringComparison.Ordinal));
+            Assert.DoesNotContain(rig.WorkerLogs.Lines, l => l.Contains(value, StringComparison.Ordinal));
+        }
     }
 
     [Fact]

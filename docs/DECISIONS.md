@@ -709,6 +709,24 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
   The executor is resolved lazily, so nothing can execute before these checks pass.
 - **Test layering:** AutomationTests may now also reference Infrastructure and the Worker, to run the real Worker composition end to end against DemoCrm. It still never references the Api. A separate end-to-end project could not reference DemoCrm (ADR-027).
 - **DI split:** Api use cases that need an authenticated caller are registered by `AddPlatformServices` (Api only); the Worker composition is `AddWorkerServices`.
+## ADR-073 — Operator fencing, explicit requeue and separate-process verification (Phase 5 step 8a)
+**Status:** Accepted (2026-11-17). Covers the Phase 5 work that does not depend on the process-death supervisor. The supervisor (step 7) is blocked on an environment decision (docs/PHASE5_PLAN.md, "Feasibility spike").
+- **Human fence confirmation (§7.5.6):**
+  - `GET /api/v1/platform/incarnations` and `POST /api/v1/platform/incarnations/{id}/fence` are restricted to the **platform-operator** Identity role, never a tenant role. The reads span organizations by design but return incarnation identity and counts only;
+  - the service builds the evidence from the incarnation's recorded unit and the authenticated operator, with `ActorRole.PlatformOperator`;
+  - the journal validates it (closed method list, 10–1,000-character reference, personal attestation, drain report for `DrainVerified`) and audits every call, accepted or rejected;
+  - the Api registers the journal for this purpose only: it never executes, and still never references Automation.
+- **Explicit requeue (§7.5.7):** `POST /api/v1/jobs/{job}/records/{record}/requeue` (Admin+) moves a `NeedsReview` record back to the queue and reopens its job. A fence never restarts automation by itself. After a requeue, the Worker re-evaluates the journal and the executor's guard still refuses any unauthorized repeat, so a requeue leads to reconciliation, never to a blind repeat.
+- **Test-only Worker host:** `tests/AutomataFlow.WorkerTestHost` is the real `AddWorkerServices` composition plus a test containment handshake, so tests can run Workers as separate OS processes and kill them. It is never referenced by any project, and production code contains no handshake implementation yet (both architecture-tested). The production Worker still refuses to start without a real handshake.
+- **Separate-process verification (AutomationTests, real Api process, real Worker processes, real Chromium, DemoCrm, PostgreSQL):**
+  - **Demo CSV end to end:** `samples/demo-customers.csv` through the Api with two Worker processes. Every row matches its `expected` column; exactly the 7 `created` rows exist at the target; the results export carries no inputs.
+  - **K2 (SIGKILL of the whole Worker tree before the checkpoint):** the abandoned attempt has no checkpoint, so it is fenced by `NoCheckpoint` and retried automatically: one POST, one customer.
+  - **K1 (SIGKILL after the checkpoint and the POST; the target commits late):**
+    - the attempt is unfenced, so the record waits (`AwaitingFence`), then becomes `NeedsReview` after `FenceWaitSeconds` and is **never retried**;
+    - an audited operator fence through the Api plus an explicit requeue leads to a reconcile that **finds** the late-committed customer (`Reconciled`);
+    - totals: one POST and one customer for the record.
+  - These are real process kills, but **without the process-death supervisor**: automatic `ProcessDeathConfirmed` fencing (P1–P13) remains step 7.
+- **Leak checks:** neither the CRM password nor the record's e-mail appears in the stored execution logs or the Worker's own logs.
 ## Resolved from the approval round (2026-11-11)
 1. SDK: selected from inspection, not blindly pinned (ADR-004). 2. PostgreSQL: Docker `postgres:18`, port 5433, volume (ADR-013). 3. Git initialized; commit after each verified phase; no secrets or generated artifacts. 4. Identity + JWT (ADR-010). 5. Hand-written validators (ADR-016). 6. Razor Pages Demo CRM (ADR-011). 7. Folder layout `src/ tests/ web/ deploy/ docs/`, React in `web/automataflow-web`. 8. 16-day target, 16–20 realistic; quality over deadline. 9. Frontend libraries deferred (ADR-019). 10. Playwright Chromium download approved for Phase 3.
 

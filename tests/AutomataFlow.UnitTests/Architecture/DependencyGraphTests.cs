@@ -33,10 +33,26 @@ public class DependencyGraphTests
             Graph.DirectReferences(project).Order(StringComparer.Ordinal));
     }
 
+    /// <summary>Test-only executables (ADR-073): never referenced by anything, referencing only what they host.</summary>
+    private static readonly Dictionary<string, string[]> TestOnlyHosts = new()
+    {
+        ["AutomataFlow.WorkerTestHost"] = ["AutomataFlow.Worker"],
+    };
+
+    [Fact]
+    public void Test_only_hosts_reference_only_what_they_host_and_nothing_references_them()
+    {
+        foreach (var (host, references) in TestOnlyHosts)
+        {
+            Assert.Equal(references.Order(StringComparer.Ordinal), Graph.DirectReferences(host).Order(StringComparer.Ordinal));
+            Assert.DoesNotContain(Graph.Projects, p => Graph.DirectReferences(p).Contains(host));
+        }
+    }
+
     [Fact]
     public void All_approved_source_projects_exist_and_nothing_unexpected_is_in_src()
     {
-        var sourceProjects = Graph.Projects.Where(p => !p.EndsWith("Tests", StringComparison.Ordinal));
+        var sourceProjects = Graph.Projects.Where(p => !p.EndsWith("Tests", StringComparison.Ordinal) && !TestOnlyHosts.ContainsKey(p));
 
         Assert.Equal(
             ApprovedSourceReferences.Keys.Order(StringComparer.Ordinal),

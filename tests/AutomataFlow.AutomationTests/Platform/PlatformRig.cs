@@ -199,6 +199,30 @@ internal sealed class PlatformRig : IAsyncDisposable
         }
     }
 
+    /// <summary>Reads with another organization's scope (e.g. one registered through the Api process).</summary>
+    public async Task<T> QueryAsync<T>(Guid organization, Func<AutomataFlowDbContext, Task<T>> query)
+    {
+        await using var scope = Platform.CreateAsyncScope();
+        scope.ServiceProvider.GetRequiredService<TenantScope>().Enter(organization);
+        return await query(scope.ServiceProvider.GetRequiredService<AutomataFlowDbContext>());
+    }
+
+    /// <summary>Grants the platform-operator Identity role (a platform administration act, done directly in the database).</summary>
+    public async Task GrantPlatformOperatorAsync(Guid user)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var grant = new NpgsqlCommand("""
+            INSERT INTO "AspNetRoles" ("Id","Name","NormalizedName","ConcurrencyStamp")
+            SELECT @role, 'PlatformOperator', 'PLATFORMOPERATOR', @stamp WHERE NOT EXISTS (SELECT 1 FROM "AspNetRoles" WHERE "NormalizedName" = 'PLATFORMOPERATOR');
+            INSERT INTO "AspNetUserRoles" ("UserId","RoleId") SELECT @user, "Id" FROM "AspNetRoles" WHERE "NormalizedName" = 'PLATFORMOPERATOR';
+            """, connection);
+        grant.Parameters.AddWithValue("role", Guid.NewGuid());
+        grant.Parameters.AddWithValue("stamp", Guid.NewGuid().ToString());
+        grant.Parameters.AddWithValue("user", user);
+        await grant.ExecuteNonQueryAsync();
+    }
+
     /// <summary>Reads with the rig's organization scope.</summary>
     public async Task<T> QueryAsync<T>(Func<AutomataFlowDbContext, Task<T>> query)
     {

@@ -16,6 +16,12 @@ public sealed class ExecutionController(ExecutionQueryService executions) : Cont
     public async Task<IActionResult> Cancel(Guid jobId, CancellationToken cancellationToken) =>
         this.ToHttp(await executions.CancelAsync(jobId, cancellationToken), _ => Accepted());
 
+    /// <summary>Explicit requeue of a NeedsReview record (never automatic after a fence, §7.5.7).</summary>
+    [HttpPost("jobs/{jobId:guid}/records/{recordId:guid}/requeue")]
+    [Authorize(Policy = Policies.Admin)]
+    public async Task<IActionResult> Requeue(Guid jobId, Guid recordId, CancellationToken cancellationToken) =>
+        this.ToHttp(await executions.RequeueAsync(jobId, recordId, cancellationToken), _ => Accepted());
+
     /// <summary>Results as CSV (row, operation id, status, error code, result fields). Never contains record inputs.</summary>
     [HttpGet("jobs/{jobId:guid}/results.csv")]
     public async Task Results(Guid jobId, CancellationToken cancellationToken)

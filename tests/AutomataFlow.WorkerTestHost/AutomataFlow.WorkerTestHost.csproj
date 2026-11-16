@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+  <!--
+    TEST-ONLY Worker executable (Phase 5 step 8a, ADR-073): the real Worker composition (AddWorkerServices) plus a test
+    containment handshake, so end-to-end tests can run Workers as separate OS processes and kill them. Never shipped,
+    never referenced by a production project (architecture-tested). The production Worker refuses to start without a real
+    containment handshake (ADR-058).
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AutomataFlow.Worker\AutomataFlow.Worker.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+</Project>

@@ -56,6 +56,36 @@ public sealed class ExecutionQueryService(AutomataFlowDbContext db, ICurrentUser
         return ServiceResult<bool>.Ok(true);
     }
 
+    /// <summary>
+    /// Explicit operator requeue of a NeedsReview record (§7.5.7): a fence or new evidence never restarts automation by
+    /// itself. The record returns to the queue; the Worker re-evaluates the journal and the executor's admission guard
+    /// still refuses any repeat that is not authorized (so a requeue can lead to reconciliation, never to a blind repeat).
+    /// </summary>
+    public async Task<ServiceResult<bool>> RequeueAsync(Guid jobId, Guid recordId, CancellationToken cancellationToken)
+    {
+        var org = user.OrganizationId;
+        var record = await db.JobRecords.AsNoTracking().SingleOrDefaultAsync(r => r.OrganizationId == org && r.JobId == jobId && r.Id == recordId, cancellationToken);
+        if (record is null)
+        {
+            return ServiceResult<bool>.NotFound();
+        }
+
+        if (record.Status != JobRecordStatus.NeedsReview)
+        {
+            return ServiceResult<bool>.Fail(ServiceStatus.Conflict, new ServiceError(null, "not-needs-review", "Only a record that needs review can be requeued."));
+        }
+
+        var now = clock.GetUtcNow();
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await db.JobRecords.Where(r => r.OrganizationId == org && r.Id == recordId && r.Status == JobRecordStatus.NeedsReview)
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, JobRecordStatus.Pending).SetProperty(r => r.NextAttemptAt, now)
+                .SetProperty(r => r.AwaitingFenceSince, (DateTimeOffset?)null).SetProperty(r => r.CompletedAt, (DateTimeOffset?)null).SetProperty(r => r.ErrorCode, "Requeued"), cancellationToken);
+        await db.Jobs.Where(j => j.OrganizationId == org && j.Id == jobId && !j.CancelRequested)
+            .ExecuteUpdateAsync(s => s.SetProperty(j => j.Status, JobStatus.Running).SetProperty(j => j.FinishedAt, (DateTimeOffset?)null), cancellationToken);
+        await tx.CommitAsync(cancellationToken);
+        return ServiceResult<bool>.Ok(true);
+    }
+
     /// <summary>Writes the job's records as CSV: row, operation id, status, error code and every result field (never inputs).</summary>
     public async Task<bool> WriteResultsCsvAsync(Guid jobId, TextWriter output, CancellationToken cancellationToken)
     {

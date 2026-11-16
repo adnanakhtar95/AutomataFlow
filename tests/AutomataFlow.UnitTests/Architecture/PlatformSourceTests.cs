@@ -36,4 +36,17 @@ public class PlatformSourceTests
             .ToList();
         Assert.Empty(offenders);
     }
+
+    /// <summary>
+    /// ADR-058/073: no production code may claim containment without a real supervisor handshake. Until step 7 delivers
+    /// the platform implementations, src contains the port only; the test handshake lives in the test-only host.
+    /// </summary>
+    [Fact]
+    public void No_production_code_implements_the_containment_handshake_yet()
+    {
+        var implementations = ProductionSources()
+            .Where(f => System.Text.RegularExpressions.Regex.IsMatch(File.ReadAllText(f), @"(class|record)\s+\w+[^{;]*:[^{;]*\bIContainmentHandshake\b"))
+            .ToList();
+        Assert.Empty(implementations);
+    }
 }

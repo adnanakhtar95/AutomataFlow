@@ -114,6 +114,10 @@ public static class DependencyInjection
             sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Persistence.Journal.AttemptJournalOptions>>(),
             sp.GetService<Microsoft.Extensions.Logging.ILogger<Persistence.Journal.PostgresAttemptJournal>>()));
         services.AddSingleton<Application.Workflows.Execution.IAttemptJournal>(sp => sp.GetRequiredService<Persistence.Journal.PostgresAttemptJournal>());
+        services.AddSingleton(sp => new Persistence.Journal.FenceAdministration(
+            sp.GetRequiredKeyedService<Npgsql.NpgsqlDataSource>(JournalDataSourceKey),
+            sp.GetRequiredService<Application.Workflows.Execution.IAttemptJournal>(),
+            sp.GetRequiredService<TimeProvider>()));
         return services;
     }
 
