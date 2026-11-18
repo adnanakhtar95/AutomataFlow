@@ -116,5 +116,22 @@ Real tests run against the production launcher, supervisor and (where stated) th
 | P12 below-socket queueing | **unavailable** | `sch_netem` cannot be loaded and the image has no `tc` |
 | P13 fail-closed matrix | **mixed** | real: EPERM, corrupt ledger, identity mismatch, live foreign owner (found Docker's DNS listener, ADR-075). Fakes: interrupted dump, EOPNOTSUPP, silently skipped destroy, partial drain, incomplete scan. Windows rows: fakes only. A supervisor restart mid-drain cannot happen: supervisor death tears the container down (no fence, P6) |
 
+## Release-image end-to-end verification (2026-11-19, commit eb2956c)
+- **Setup:**
+  - Worker: the production image `automataflow-worker:e2e-eb2956c` (`deploy/worker/Dockerfile`, Release publish, pinned SDK 10.0.404, Playwright 1.64.1), later the compose `worker` service.
+  - Api and DemoCrm: Release publishes in containers on the compose network (no images exist for them before Phase 7).
+  - Database: a dedicated migrated database; `has-pending-model-changes` reports none.
+- **Egress:** the Worker ran with `Browser:Mode=Development` and DemoCrm as the single exact-origin private exception (ADR-047), because DemoCrm lives on a private Docker IP.
+
+| Scenario | Result |
+|---|---|
+| Demo CSV through the Api (14 rows) | 7 Succeeded / 6 Failed / 1 Invalid, every row matching its `expected` column; DemoCrm +7 customers. Attempts, logs (redacted), screenshot artifact (attachment, `nosniff`) and export (no inputs) served by the Api |
+| SIGKILL of the Worker after its POST (late commit), `docker run` | supervisor `unit-exited`, then `ProcessDeathConfirmed` 0.86 s after the kill (183 ledger entries cross-checked, 0 sockets left transmit-capable, 1 attempt fenced); restart policy started a new incarnation, which reconciled (`ReconciledFound`); +1 customer, +1 POST |
+| Same through Docker Compose | identical: fence within 1 s, restart, `ReconciledFound`, +1 customer, +1 POST |
+| Tenant isolation through the Api | tenant B gets 404 for every tenant-A job, record, attempt, log, artifact, export and workflow, and for cancel and requeue; 403 for platform incarnations; empty lists |
+| Graceful shutdown (`docker stop`, `docker compose stop`) | exit 0 in under 1 s, `Worker stopped`, then an accepted fence |
+
+- **Totals:** 4 incarnations, 4 accepted fences, 0 unfenced blocking attempts; DemoCrm POSTs 16 = 14 + 1 + 1. No duplicate submission.
+
 ## Resolved observations
 - **Step 6 stall (resolved in step 8b, ADR-074):** an end-to-end job stayed `Running` although all its records had finished. Cause: a job-finalization race between concurrent record completions (read committed). Fix: a job-row lock in every finalizing transaction, plus an idle-job sweep. The regression test was shown to fail without the fix.
