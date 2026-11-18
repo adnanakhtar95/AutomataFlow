@@ -100,6 +100,7 @@ Scope:
 
 ## Phase 5 — Background workers and job orchestration
 Detailed step plan: `docs/PHASE5_PLAN.md` (authorized 2026-11-15).
+**Status (2026-11-19): complete** (steps 1–9; process-death containment per ADR-075). Not delivered in Phase 5: a Windows supervisor; P12 (below-socket queueing) could not be run in the verification environment; separate database roles for fence confirmation.
 - Full EF model and migrations for the 13 entities; org-scoped query filters.
 - Job creation API with CSV/JSON parsing and upload limits.
 - Durable claiming (`SKIP LOCKED`, lease, heartbeat, recovery), concurrency, retries/backoff, cancellation, partial failure, job completion states, result export.
@@ -108,11 +109,11 @@ Detailed step plan: `docs/PHASE5_PLAN.md` (authorized 2026-11-15).
 - OperationId, Indeterminate attempts, reconciliation and NeedsReview (ARCHITECTURE §5.6):
   - PostgreSQL `IAttemptJournal` (unique in-flight/unfenced constraint, conditional checkpoint, fencing tokens, lease renewal, database clock, late completion, audited `ConfirmFenceAsync`);
   - it must pass the shared Phase 4 conformance suite plus the crash (really killed Worker), fencing and concurrency tests before any customer execution;
-  - process-death fence supervisor (ADR-059):
+  - process-death fence supervisor (ADR-059 as amended by ADR-075):
     - Worker incarnation registration;
-    - cgroup v2 / Job Object containment with a startup handshake;
-    - whole-unit kill with positive "unit empty" or boot-id proof;
-    - supervisor socket drain over the connection ledger (Linux: dedicated network namespace, destroy by exact cookie; Windows: tuple + creation-timestamp identity, never terminates, ambiguity fails closed);
+    - Linux: one Worker per container, nested user and PID namespaces (zero capabilities), a supervisor with `CAP_NET_ADMIN` only, and a startup handshake (Windows Job Object containment: not delivered, a Windows Worker refuses to start);
+    - whole-unit kill with positive "unit empty" proof (wrapper reaped plus an independent process scan); boot-id proof at journal level and through the operator only;
+    - supervisor socket drain over the connection ledger (Linux: the container's namespace, supervisor sockets excluded by inode, destroy by exact cookie; Windows: tuple + creation-timestamp identity, never terminates, ambiguity fails closed);
     - tests P1–P13 on real processes (incl. port-reuse P11a–P11f and below-socket queueing P12);
     - platform-operator human confirmation with audited evidence;
     - runbook rule: no memory-snapshot restore of Worker hosts;
