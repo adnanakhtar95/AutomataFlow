@@ -47,6 +47,22 @@ to the cgroup filesystem, and the approved verification environment deliberately
 without privileges. The resolution is decided at step 7, where the conflict is reported to the user with options.
 Steps 1–6 do not depend on it.
 
+**Step 7 spike, Option A (namespace containment, user decision 2026-11-18).** Observed on the same pinned image,
+kernel 6.18 WSL2, uid 10001, no capabilities, Chromium seccomp profile:
+- the container has no `CAP_NET_ADMIN`, not even in its bounding set; the image has no `ip`, `ss`, `slirp4netns` or `pasta`;
+- a dedicated network namespace contains only `lo`; a contained client gets "Network is unreachable";
+- `setns` is denied (EPERM) by the seccomp profile even to a process that is root in its own user namespace, so the
+  supervisor cannot enter the namespace to open a `sock_diag` socket (only fd passing from inside remains);
+- mount namespaces are denied ("cannot change root filesystem propagation"), so the Worker sees the container's `/proc`;
+- proof of death works: killing the namespace init and reaping its wrapper left **0** tasks in the unit's pid or net
+  namespace (scan of `/proc` by namespace inode);
+- isolation works: the contained Worker cannot signal the supervisor (ESRCH: not in its pid namespace) or read its memory (EACCES).
+
+**Blocker (reported to the user).** Linking a dedicated network namespace to any network needs `CAP_NET_ADMIN` in the
+container's (or host's) network namespace. A userspace forwarder (pasta, slirp4netns, a relay) would end the target's
+TCP connection outside the unit and keep buffered bytes after the fence, breaking E2 (P7, P8). So the approved design
+is unprivileged for containment and the supervisor's destroy capability, but **not** for the Worker's connectivity to targets.
+
 ## Acceptance checklist
 1. [x] (Step 1, ADR-067: 22 integration tests incl. 8 new database tenant-isolation tests; reflection, source-scan and domain tests.) Persistence model, migrations, constraints; every customer row `IOrganizationOwned`; write guard; reflection test; cross-tenant database tests also with query filters disabled.
 2. [x] (Step 2, ADR-068: 11 Api tests; step 8a, ADR-073: the platform-operator policy guards fence confirmation, tested for refusal of tenant users and audited acceptance.) Auth: Identity, JWT, rotating hashed refresh tokens, role policies, platform-operator role, login rate limiting; membership verified server-side.
