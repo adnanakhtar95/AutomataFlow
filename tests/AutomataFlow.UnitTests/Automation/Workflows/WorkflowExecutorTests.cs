@@ -280,6 +280,60 @@ public class WorkflowExecutorTests
     }
 
     [Fact]
+    public async Task J5b_a_transient_completion_failure_is_retried_so_the_entry_is_completed_and_fenced()
+    {
+        var harness = await ExecutorHarness.CreateAsync((clock, _) => new CompleteFailsOnceJournal(clock, TimeSpan.FromMinutes(5)));
+        var operation = Guid.NewGuid();
+
+        var (_, result) = await RunAsync(Full, harness: harness, operation: operation);
+
+        Assert.Equal(WorkflowOutcome.Succeeded, result.Outcome);
+        Assert.DoesNotContain("JournalCompletionFailed", result.Diagnostics);
+        var entry = Assert.Single(harness.Journal.History(Org, operation));
+        Assert.Equal(AttemptState.Completed, entry.State);
+        Assert.True(RepeatSafetyEvaluator.IsFenced(entry)); // not left Started (and unfenced) until the lease expires
+    }
+
+    [Fact]
+    public async Task J5c_a_completion_whose_acknowledgement_was_lost_is_recognized_on_retry()
+    {
+        var harness = await ExecutorHarness.CreateAsync((clock, _) => new CompleteAckLostOnceJournal(clock, TimeSpan.FromMinutes(5)));
+        var operation = Guid.NewGuid();
+
+        var (_, result) = await RunAsync(Full, harness: harness, operation: operation);
+
+        Assert.Equal(WorkflowOutcome.Succeeded, result.Outcome);
+        Assert.Contains("JournalCompletionAmbiguousButRecorded", result.Diagnostics);
+        Assert.Equal(AttemptState.Completed, Assert.Single(harness.Journal.History(Org, operation)).State);
+    }
+
+    [Fact]
+    public async Task J5d_an_invalid_state_retry_without_a_stored_completion_is_never_reported_as_recorded()
+    {
+        var harness = await ExecutorHarness.CreateAsync((clock, _) => new CompleteFailsThenInvalidStateJournal(clock, TimeSpan.FromMinutes(5)));
+        var operation = Guid.NewGuid();
+
+        var (_, result) = await RunAsync(Full, harness: harness, operation: operation);
+
+        Assert.DoesNotContain("JournalCompletionAmbiguousButRecorded", result.Diagnostics);
+        Assert.Contains("JournalCompletionFailed", result.Diagnostics);
+        Assert.Equal(AttemptState.Started, Assert.Single(harness.Journal.History(Org, operation)).State);
+    }
+
+    [Fact]
+    public async Task J5e_a_first_call_invalid_state_is_a_refusal_and_is_not_retried()
+    {
+        CompleteInvalidStateJournal? journal = null;
+        var harness = await ExecutorHarness.CreateAsync((clock, _) => journal = new CompleteInvalidStateJournal(clock, TimeSpan.FromMinutes(5)));
+
+        var (_, result) = await RunAsync(Full, harness: harness);
+
+        Assert.Equal(1, journal!.CompleteCalls);
+        Assert.Contains("JournalCompletionFailed", result.Diagnostics);
+        Assert.DoesNotContain("JournalCompletionAmbiguousButRecorded", result.Diagnostics);
+    }
+
+    [Fact]
     public async Task J6_J7_concurrent_attempts_for_one_operation_admit_exactly_one()
     {
         var harness = await ExecutorHarness.CreateAsync();

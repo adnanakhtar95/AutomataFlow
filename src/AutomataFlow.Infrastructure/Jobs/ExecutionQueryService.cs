@@ -43,6 +43,7 @@ public sealed class ExecutionQueryService(AutomataFlowDbContext db, ICurrentUser
         }
 
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await JobFinalizer.LockAsync(db, org, jobId, cancellationToken);
         job.RequestCancellation();
         await db.SaveChangesAsync(cancellationToken);
         var now = clock.GetUtcNow();
@@ -77,6 +78,7 @@ public sealed class ExecutionQueryService(AutomataFlowDbContext db, ICurrentUser
 
         var now = clock.GetUtcNow();
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await JobFinalizer.LockAsync(db, org, jobId, cancellationToken);
         await db.JobRecords.Where(r => r.OrganizationId == org && r.Id == recordId && r.Status == JobRecordStatus.NeedsReview)
             .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, JobRecordStatus.Pending).SetProperty(r => r.NextAttemptAt, now)
                 .SetProperty(r => r.AwaitingFenceSince, (DateTimeOffset?)null).SetProperty(r => r.CompletedAt, (DateTimeOffset?)null).SetProperty(r => r.ErrorCode, "Requeued"), cancellationToken);

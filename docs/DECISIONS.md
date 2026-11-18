@@ -727,6 +727,25 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
     - totals: one POST and one customer for the record.
   - These are real process kills, but **without the process-death supervisor**: automatic `ProcessDeathConfirmed` fencing (P1–P13) remains step 7.
 - **Leak checks:** neither the CRM password nor the record's e-mail appears in the stored execution logs or the Worker's own logs.
+## ADR-074 — Job-finalization race fix, completion retry and the operations runbook (Phase 5 step 8b)
+**Status:** Accepted (2026-11-17).
+- **Completion retry:** the executor retries `CompleteAsync` up to 3 times with a short backoff. A completion only adds information, so retrying is safe.
+  - An `InvalidState` answer on a retry *may* mean the earlier, unacknowledged commit landed. That is never assumed (ADR-071): the executor re-reads the history and records `JournalCompletionAmbiguousButRecorded` only if the entry shows this attempt's outcome, error code and a finish time; otherwise `JournalCompletionFailed`.
+  - A `Fenced` refusal, or `InvalidState` on the **first** call, is a refusal, not a transient failure, and stops the retries.
+  - Persistent failure keeps the J5 behaviour (diagnostic `JournalCompletionFailed`; the entry is judged at lease expiry).
+  
+  Without retries, one transient journal error left an attempt `Started` until its lease expired, blocking the operation for up to the lease length (and leaving it unfenced if it had checkpointed).
+- **The Step 6 stall, root cause found and fixed:** it recurred once with diagnostics. Both records were `Succeeded`, yet the job stayed `Running`. Cause: a **job-finalization race**. Two records finished in two concurrent transactions; under read committed, each "are all records done?" check saw the other record still `Running`, so neither finalized the job.
+  - **Fix:** every transaction that can finish a job (record completion, cancellation, requeue) first takes the **job-row lock** (`JobFinalizer.LockAsync`). This is the same lock order as claiming (job, then records), so finalization is serialized and the second check sees the first commit.
+  - **Defense in depth:** the Worker's recovery loop also finalizes any running job with nothing left to run (`FinalizeIdleJobsAsync`). Its candidate query is only a hint: each job is locked in its own transaction (`SKIP LOCKED`) and re-checked by the shared `JobFinalizer.FinalizeSql` in a **later statement**. Under read committed a statement's snapshot predates its own lock wait, so a single "lock and check" statement could finalize a job whose record was requeued in between, stranding a `Pending` record. One finalization statement serves every writer.
+  - **Regression tests:** 40 iterations of two concurrent completions against PostgreSQL, shown to **fail without the lock** (job stays `Running`) and to pass with it; and a requeue injected between the sweep's candidate choice and its lock, which must leave the job `Running` with the record `Pending`.
+  - The completion retry above is an independent hardening, not this cause.
+- **Runbook:** `docs/RUNBOOK.md` covers:
+  - the operating rules the guarantees depend on: no memory-snapshot restore or clone, no pause or live migration during execution, `fsync = on`;
+  - required configuration and fail-closed startup;
+  - handling `AwaitingFence` and `NeedsReview` records;
+  - the audited operator fence procedure;
+  - cancellation.
 ## Resolved from the approval round (2026-11-11)
 1. SDK: selected from inspection, not blindly pinned (ADR-004). 2. PostgreSQL: Docker `postgres:18`, port 5433, volume (ADR-013). 3. Git initialized; commit after each verified phase; no secrets or generated artifacts. 4. Identity + JWT (ADR-010). 5. Hand-written validators (ADR-016). 6. Razor Pages Demo CRM (ADR-011). 7. Folder layout `src/ tests/ web/ deploy/ docs/`, React in `web/automataflow-web`. 8. 16-day target, 16–20 realistic; quality over deadline. 9. Frontend libraries deferred (ADR-019). 10. Playwright Chromium download approved for Phase 3.
 

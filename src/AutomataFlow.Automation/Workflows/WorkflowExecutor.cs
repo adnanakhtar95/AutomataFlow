@@ -112,6 +112,9 @@ public sealed class WorkflowExecutor : IWorkflowExecutor
         (_binding, _uploads) = MapServerOptions(browserOptions.Value);
     }
 
+    /// <summary>Bounded retries of the journal completion (it only adds information, so retrying is safe).</summary>
+    internal const int CompletionAttempts = 3;
+
     internal ExecutorTestHooks? Hooks { get; set; }
 
     /// <summary>Server options → binding (§6.2): Development flag, trusted private origins, session and upload limits.</summary>
@@ -362,15 +365,45 @@ public sealed class WorkflowExecutor : IWorkflowExecutor
             ? new ReconciliationEvidence(finding, observedAt, policy)
             : null;
 
+        // A completion only adds information (it may even arrive late), so a failed write is retried briefly: a lost
+        // completion leaves the entry Started until its lease expires, blocking the operation (and, with a checkpoint,
+        // leaving it unfenced). An InvalidState answer on a retry MAY mean the earlier, unacknowledged commit landed; that
+        // is never assumed (ADR-071): only a re-read history showing our completion counts as recorded.
         var finishedAt = startedAt;
-        try
+        var completion = new AttemptCompletion(outcome, run.Error?.ToSummary(), sideEffect, fenced, evidence);
+        for (var attempt = 1; ; attempt++)
         {
-            finishedAt = await _journal.CompleteAsync(run.Slot, new AttemptCompletion(outcome, run.Error?.ToSummary(), sideEffect, fenced, evidence), CancellationToken.None);
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            // Diagnostic only: the outcome is unchanged; with a checkpoint the entry stays unfenced until fenced (J5).
-            run.Diagnostics.Add("JournalCompletionFailed");
+            try
+            {
+                finishedAt = await _journal.CompleteAsync(run.Slot, completion, CancellationToken.None);
+                break;
+            }
+            catch (AttemptJournalException ex) when (attempt > 1 && ex.Code == JournalErrorCodes.InvalidState)
+            {
+                if (await CompletionRecordedAsync(run.Slot, completion) is { } recordedAt)
+                {
+                    finishedAt = recordedAt;
+                    run.Diagnostics.Add("JournalCompletionAmbiguousButRecorded");
+                }
+                else
+                {
+                    run.Diagnostics.Add("JournalCompletionFailed");
+                }
+
+                break;
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                // Fenced and a first-call InvalidState are refusals, not transient failures: retrying cannot help.
+                if (attempt >= CompletionAttempts || ex is AttemptJournalException { Code: JournalErrorCodes.Fenced or JournalErrorCodes.InvalidState })
+                {
+                    // Diagnostic only: the outcome is unchanged; with a checkpoint the entry stays unfenced until fenced (J5).
+                    run.Diagnostics.Add("JournalCompletionFailed");
+                    break;
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), _clock, CancellationToken.None);
+            }
         }
 
         _logger.LogInformation("Workflow attempt completed {OperationId} {Attempt} {Outcome} {ErrorCode} {SideEffect} {ExecutionFenced}",
@@ -378,6 +411,28 @@ public sealed class WorkflowExecutor : IWorkflowExecutor
 
         return new WorkflowExecutionResult(outcome, run.Slot.AttemptNumber, run.Error, sideEffect, fenced, null, evidence,
             run.Results.ToImmutableDictionary(StringComparer.Ordinal), [.. run.Steps], [.. run.Artifacts], [.. run.Diagnostics], startedAt, finishedAt);
+    }
+
+    /// <summary>
+    /// Evidence that this attempt's completion is in the journal: the re-read entry carries our outcome, error code and a
+    /// finish time (only the fencing-token holder can complete an entry). Null when the history cannot be read or does not show it (never assume success).
+    /// </summary>
+    private async Task<DateTimeOffset?> CompletionRecordedAsync(AttemptReservation slot, AttemptCompletion completion)
+    {
+        try
+        {
+            var (history, _) = await _journal.ReadHistoryAsync(slot.OrganizationId, slot.OperationId, CancellationToken.None);
+            return history.SingleOrDefault(e => e.AttemptNumber == slot.AttemptNumber) is
+                { State: AttemptState.Completed or AttemptState.Abandoned, FinishedAt: { } at } entry
+                && entry.Outcome == completion.Outcome
+                && entry.Error?.Code == completion.Error?.Code
+                ? at
+                : null;
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            return null;
+        }
     }
 
     private enum Section

@@ -135,6 +135,62 @@ public sealed class RecordDispatcher(NpgsqlDataSource source)
         return await recover.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// Defense in depth: finalizes any running job none of whose records can still run (a finalization missed by a crash
+    /// between the last record and its job update). The candidate query is only a hint: each job is then locked in its own
+    /// transaction (SKIP LOCKED) and re-checked by <see cref="JobFinalizer.FinalizeSql"/> in a LATER statement, whose fresh
+    /// snapshot sees a requeue that committed in between, so a requeued Pending record is never stranded in a finished job.
+    /// </summary>
+    public async Task<int> FinalizeIdleJobsAsync(CancellationToken cancellationToken)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        var candidates = new List<(Guid Org, Guid Job)>();
+        await using (var select = new NpgsqlCommand("""
+            SELECT j."OrganizationId", j."Id" FROM "Jobs" j
+            WHERE j."Status" IN ('Pending', 'Running')
+              AND NOT EXISTS (SELECT 1 FROM "JobRecords" r WHERE r."OrganizationId" = j."OrganizationId" AND r."JobId" = j."Id"
+                              AND r."Status" IN ('Pending', 'Running', 'AwaitingFence'))
+            LIMIT 100
+            """, connection))
+        await using (var reader = await select.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                candidates.Add((reader.GetGuid(0), reader.GetGuid(1)));
+            }
+        }
+
+        if (AfterSweepCandidates is { } between)
+        {
+            await between();
+        }
+
+        var finalized = 0;
+        foreach (var (org, job) in candidates)
+        {
+            await using var tx = await connection.BeginTransactionAsync(cancellationToken);
+            await using (var lockJob = new NpgsqlCommand("""
+                SELECT 1 FROM "Jobs" WHERE "OrganizationId" = @org AND "Id" = @job FOR UPDATE SKIP LOCKED
+                """, connection, tx))
+            {
+                lockJob.Parameters.AddWithValue("org", org);
+                lockJob.Parameters.AddWithValue("job", job);
+                if (await lockJob.ExecuteScalarAsync(cancellationToken) is null)
+                {
+                    continue; // another writer holds it and finalizes it itself if appropriate
+                }
+            }
+
+            finalized += await JobFinalizer.TryFinalizeAsync(connection, tx, org, job, cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+        }
+
+        return finalized;
+    }
+
+    /// <summary>Test seam: runs after the sweep chose its candidates and before it locks any job (the race window).</summary>
+    internal Func<Task>? AfterSweepCandidates { get; set; }
+
     /// <summary>Which of these jobs have a cancellation request (polled by the heartbeat).</summary>
     public async Task<IReadOnlySet<Guid>> CancelRequestedAsync(IReadOnlyCollection<Guid> jobs, CancellationToken cancellationToken)
     {

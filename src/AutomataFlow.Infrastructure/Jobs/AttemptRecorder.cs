@@ -6,6 +6,7 @@ using AutomataFlow.Domain.Workflows;
 using AutomataFlow.Infrastructure.Persistence;
 using AutomataFlow.Infrastructure.Security;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace AutomataFlow.Infrastructure.Jobs;
 
@@ -56,6 +57,10 @@ public sealed class AttemptRecorder(AutomataFlowDbContext db, TenantScope tenant
         var completedAt = transition.IsTerminal ? now : (DateTimeOffset?)null;
 
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+
+        // Serialize every transaction that can finish this job on the job row: otherwise two records completing at the
+        // same moment each see the other still Running (read committed) and neither finalizes the job.
+        await JobFinalizer.LockAsync(db, org, claim.JobId, cancellationToken);
         var updated = await db.JobRecords
             .Where(r => r.OrganizationId == org && r.Id == claim.Id && r.LockedBy == incarnation && r.Status == JobRecordStatus.Running)
             .ExecuteUpdateAsync(s => s
@@ -123,25 +128,51 @@ public sealed class AttemptRecorder(AutomataFlowDbContext db, TenantScope tenant
     };
 }
 
-/// <summary>Completes a job once none of its records can still run (docs/ARCHITECTURE.md §5.5). Idempotent and race-safe.</summary>
+/// <summary>
+/// Completes a job once none of its records can still run (docs/ARCHITECTURE.md §5.5). Idempotent; race-safe only when
+/// the calling transaction first took <see cref="LockAsync"/> (every writer that can finish a job does).
+/// </summary>
 public static class JobFinalizer
 {
+    /// <summary>Row lock on the job for the rest of the transaction (same lock order as claiming: job, then records).</summary>
+    public static Task<int> LockAsync(AutomataFlowDbContext db, Guid organizationId, Guid jobId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        return db.Database.ExecuteSqlInterpolatedAsync($"""SELECT 1 FROM "Jobs" WHERE "OrganizationId" = {organizationId} AND "Id" = {jobId} FOR UPDATE""", cancellationToken);
+    }
+
+    /// <summary>
+    /// The single finalization statement (parameters <c>@org</c>, <c>@job</c>). It must run in a statement AFTER the job-row
+    /// lock: under read committed each statement takes a fresh snapshot, so it sees every commit made before the lock.
+    /// </summary>
+    internal const string FinalizeSql = """
+        UPDATE "Jobs" AS j SET
+          "Status" = CASE WHEN j."CancelRequested" THEN 'Cancelled'
+                          WHEN s.ok = s.total THEN 'Completed'
+                          WHEN s.ok = 0 THEN 'Failed'
+                          ELSE 'CompletedWithErrors' END,
+          "FinishedAt" = now(),
+          "StartedAt" = COALESCE(j."StartedAt", now())
+        FROM (SELECT count(*) AS total,
+                     count(*) FILTER (WHERE "Status" IN ('Succeeded', 'Reconciled')) AS ok,
+                     count(*) FILTER (WHERE "Status" IN ('Pending', 'Running', 'AwaitingFence')) AS open
+              FROM "JobRecords" WHERE "OrganizationId" = @org AND "JobId" = @job) AS s
+        WHERE j."OrganizationId" = @org AND j."Id" = @job AND j."Status" IN ('Pending', 'Running') AND s.open = 0
+        """;
+
     public static Task<int> TryFinalizeAsync(AutomataFlowDbContext db, Guid organizationId, Guid jobId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(db);
-        return db.Database.ExecuteSqlInterpolatedAsync($"""
-            UPDATE "Jobs" AS j SET
-              "Status" = CASE WHEN j."CancelRequested" THEN 'Cancelled'
-                              WHEN s.ok = s.total THEN 'Completed'
-                              WHEN s.ok = 0 THEN 'Failed'
-                              ELSE 'CompletedWithErrors' END,
-              "FinishedAt" = now(),
-              "StartedAt" = COALESCE(j."StartedAt", now())
-            FROM (SELECT count(*) AS total,
-                         count(*) FILTER (WHERE "Status" IN ('Succeeded', 'Reconciled')) AS ok,
-                         count(*) FILTER (WHERE "Status" IN ('Pending', 'Running', 'AwaitingFence')) AS open
-                  FROM "JobRecords" WHERE "OrganizationId" = {organizationId} AND "JobId" = {jobId}) AS s
-            WHERE j."OrganizationId" = {organizationId} AND j."Id" = {jobId} AND j."Status" IN ('Pending', 'Running') AND s.open = 0
-            """, cancellationToken);
+        return db.Database.ExecuteSqlRawAsync(FinalizeSql, [new NpgsqlParameter("org", organizationId), new NpgsqlParameter("job", jobId)], cancellationToken);
+    }
+
+    /// <summary>The same statement on a raw connection (the Worker's idle-job sweep); call only after the job-row lock.</summary>
+    public static async Task<int> TryFinalizeAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Guid organizationId, Guid jobId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        await using var finalize = new NpgsqlCommand(FinalizeSql, connection, transaction);
+        finalize.Parameters.AddWithValue("org", organizationId);
+        finalize.Parameters.AddWithValue("job", jobId);
+        return await finalize.ExecuteNonQueryAsync(cancellationToken);
     }
 }

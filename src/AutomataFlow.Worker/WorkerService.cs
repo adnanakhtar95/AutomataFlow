@@ -230,6 +230,11 @@ public sealed class WorkerService(
                 {
                     logger.LogInformation("Recovered expired record claims {Count}", recovered);
                 }
+
+                if (await dispatcher.FinalizeIdleJobsAsync(stoppingToken) is > 0 and var finalized)
+                {
+                    logger.LogWarning("Finalized jobs whose finalization had been missed {Count}", finalized);
+                }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

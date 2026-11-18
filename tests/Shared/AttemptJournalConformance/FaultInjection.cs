@@ -26,6 +26,52 @@ public sealed class CompleteThrowsJournal(TimeProvider clock, TimeSpan? lease = 
         throw new AttemptJournalException("Simulated completion failure.");
 }
 
+/// <summary>The first completion is durably stored but its acknowledgement is lost; later calls behave normally.</summary>
+public sealed class CompleteAckLostOnceJournal(TimeProvider clock, TimeSpan? lease = null) : InMemoryAttemptJournal(clock, lease)
+{
+    private int _calls;
+
+    public override async Task<DateTimeOffset> CompleteAsync(AttemptReservation reservation, AttemptCompletion completion, CancellationToken cancellationToken)
+    {
+        var result = await base.CompleteAsync(reservation, completion, cancellationToken);
+        return Interlocked.Increment(ref _calls) == 1 ? throw new AttemptJournalException("Simulated lost acknowledgement after the completion was stored.") : result;
+    }
+}
+
+/// <summary>The first completion fails before anything is stored; the retry succeeds.</summary>
+public sealed class CompleteFailsOnceJournal(TimeProvider clock, TimeSpan? lease = null) : InMemoryAttemptJournal(clock, lease)
+{
+    private int _calls;
+
+    public override Task<DateTimeOffset> CompleteAsync(AttemptReservation reservation, AttemptCompletion completion, CancellationToken cancellationToken) =>
+        Interlocked.Increment(ref _calls) == 1 ? throw new AttemptJournalException("Simulated transient outage.") : base.CompleteAsync(reservation, completion, cancellationToken);
+}
+
+/// <summary>Every completion is refused with InvalidState (nothing is stored); counts the calls.</summary>
+public sealed class CompleteInvalidStateJournal(TimeProvider clock, TimeSpan? lease = null) : InMemoryAttemptJournal(clock, lease)
+{
+    private int _calls;
+
+    public int CompleteCalls => Volatile.Read(ref _calls);
+
+    public override Task<DateTimeOffset> CompleteAsync(AttemptReservation reservation, AttemptCompletion completion, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref _calls);
+        throw new AttemptJournalException(JournalErrorCodes.InvalidState, "Simulated refusal.");
+    }
+}
+
+/// <summary>A transient failure first (nothing stored), then InvalidState refusals: the retry must NOT be read as "recorded".</summary>
+public sealed class CompleteFailsThenInvalidStateJournal(TimeProvider clock, TimeSpan? lease = null) : InMemoryAttemptJournal(clock, lease)
+{
+    private int _calls;
+
+    public override Task<DateTimeOffset> CompleteAsync(AttemptReservation reservation, AttemptCompletion completion, CancellationToken cancellationToken) =>
+        Interlocked.Increment(ref _calls) == 1
+            ? throw new AttemptJournalException("Simulated transient outage.")
+            : throw new AttemptJournalException(JournalErrorCodes.InvalidState, "Simulated refusal without a stored completion.");
+}
+
 /// <summary>The observable state of a fake containment unit (processes and ledgered upstream sockets).</summary>
 public sealed class FakeContainmentUnit
 {
