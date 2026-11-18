@@ -22,7 +22,7 @@ Where a step has to make a design choice the documents leave open, the choice is
 | 4 | **CSV/JSON upload and job creation.** Streaming RFC 4180 parser with configurable limits (bytes, rows, columns, cell length, encoding). Record-level validation errors via `RecordValidator`, a stable OperationId per record, batched inserts without holding all records in memory, idempotent job creation (`Idempotency-Key`, unique per organization), and job options (concurrency, retry, timeouts). | 1–3 |
 | 5 | **PostgreSQL attempt journal.** `PostgresAttemptJournal` (Infrastructure, `IsDurable` and `SupportsFencing`): unique partial index for in-flight or unfenced entries, conditional checkpoint with lease margin, fencing tokens, lease renewal, the database clock, late completion, audited `ConfirmFenceAsync`, and handling of commits whose outcome is unknown (re-read; never assume success). Must pass the **unchanged shared conformance suite**, plus concurrency tests across connections. | 1 |
 | 6 | **Worker execution platform.** Durable claiming (`FOR UPDATE SKIP LOCKED`, lease, heartbeat, recovery); concurrency limits; scheduling from `RepeatSafetyEvaluator` decisions (Normal or Reconcile, backoff, `AwaitingFence` → `NeedsReview` after `FenceWaitSeconds`, never a blind repeat); cancellation and deadlines; record resolution; job completion states and result export; persistence of execution logs, artifacts and usage; authorized artifact endpoint. A **fail-closed Worker startup** (durable fencing journal, lease ≥ 120 s + margin, supervisor configured, incarnation registered, containment handshake). | 3–5 |
-| 7 | **Process-death supervisor** (ADR-059, §7.5–§7.6.5). Containment unit, whole-unit kill, positive "unit empty" or boot-id proof, socket drain over the connection ledger (Linux `sock_diag` destroy by exact cookie in the dedicated namespace; Windows tuple + timestamp, never terminates), fence reporting, and tests **P1–P13** on real processes. **Environment conflict: see below.** | 5, 6 |
+| 7 | **Process-death supervisor** (ADR-059 as amended by ADR-075, §7.5–§7.6.5). Containment unit (one Worker per container; nested user and PID namespaces), whole-unit kill, positive "unit empty" proof, socket drain over the connection ledger (Linux `sock_diag` destroy by exact cookie in the container's namespace, supervisor-owned sockets excluded by inode; Windows tuple + timestamp, never terminates), fence reporting, and tests **P1–P13** on real processes where the environment permits. **Resolved by ADR-075: see below.** | 5, 6 |
 | 8 | **Real-process recovery and end-to-end proof.** K1/K2 with a **killed Worker process**, K3 with two Worker processes, CSV demo end to end through Api + Worker against DemoCrm, cancellation, retry of injected temporary errors, and leakage tests across tenants for results, logs and artifacts. | 6, 7 |
 | 9 | **Completion.** Runbook (no memory-snapshot restore; no pause or live migration during execution), ADRs, roadmap, checklist, two consecutive full runs, diff review. | all |
 
@@ -62,6 +62,25 @@ kernel 6.18 WSL2, uid 10001, no capabilities, Chromium seccomp profile:
 container's (or host's) network namespace. A userspace forwarder (pasta, slirp4netns, a relay) would end the target's
 TCP connection outside the unit and keep buffered bytes after the fence, breaking E2 (P7, P8). So the approved design
 is unprivileged for containment and the supervisor's destroy capability, but **not** for the Worker's connectivity to targets.
+
+**Decision (user, 2026-11-19): Option 1, recorded as ADR-075.**
+- **Topology:** one Worker per container; Docker provides the container's network namespace and kernel networking.
+- **Supervisor:** uid 10002 with `CAP_NET_ADMIN` only.
+- **Worker:** nested user and PID namespaces, uid 10001, zero capabilities.
+- **Launch step:** a root launcher with `NET_ADMIN, SETUID, SETGID, SETPCAP, SYS_CHROOT`.
+
+**Gate run before implementation** (exact final posture, uid 10002 with `CAP_NET_ADMIN` only):
+- a complete `sock_diag` dump with cookies and inodes;
+- a stale-cookie destroy refused, with the replacement surviving (P11b);
+- an exact-cookie destroy succeeds and re-enumeration confirms it;
+- a real FIN_WAIT1 orphan with 2.5 MB queued to a zero-window peer destroyed, 0 left;
+- without the capability: EPERM (P9);
+- Chromium tests pass inside the unit with the sandbox on.
+
+**Remaining work:**
+- step 7: launcher, supervisor, Worker handshake, the production-posture verification container and the P tests;
+- step 8: automatic `ProcessDeathConfirmed` recovery and the restart end to end;
+- step 9.
 
 ## Acceptance checklist
 1. [x] (Step 1, ADR-067: 22 integration tests incl. 8 new database tenant-isolation tests; reflection, source-scan and domain tests.) Persistence model, migrations, constraints; every customer row `IOrganizationOwned`; write guard; reflection test; cross-tenant database tests also with query filters disabled.

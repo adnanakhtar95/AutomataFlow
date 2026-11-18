@@ -162,6 +162,13 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
 ## ADR-035 — Chromium sandbox via a derived seccomp profile, never --no-sandbox
 **Status:** Accepted (spike C1, 2026-11-11). Under Docker's default seccomp profile the Chromium sandbox cannot start, because unprivileged user namespaces are denied. `deploy/verify/chromium-seccomp.json` is Docker's default profile (moby/profiles, Apache-2.0) plus one rule allowing `clone`/`unshare` without `CAP_SYS_ADMIN`. The browser then runs **with** its sandbox as a non-root user, and privileged operations stay denied. The verification container uses it, and hosted deployments must use it (Phase 7). `ChromiumSandbox=false` is accepted only in Development mode, with a warning, and the validator rejects it elsewhere.
 
+**Amended by ADR-075 (2026-11-19):**
+- **Worker containers (production) and the step 7 supervision container (verification)** start as root with `cap_drop: ALL` and `cap_add: NET_ADMIN, SETUID, SETGID, SETPCAP, SYS_CHROOT`, under the same seccomp profile.
+- **Who holds what:** the root launcher uses `SETUID`, `SETGID` and `SETPCAP` only to create the unit and drop its own capabilities. The supervisor keeps `CAP_NET_ADMIN` alone. The Worker and Chromium hold **no** capability and run non-root (kernel uid 10001).
+- **Why `SYS_CHROOT`:** Docker's profile allows `chroot` only when the container holds `SYS_CHROOT`, and the Chromium sandbox needs `chroot` in its own user namespace.
+- **Still prohibited:** `--privileged`, `CAP_SYS_ADMIN` and `--no-sandbox`.
+- **Unchanged:** the main test container keeps its non-root posture.
+
 ## ADR-036 — Network control details proven by the spike
 **Status:** Accepted (spike, 2026-11-11).
 1. **Resolver rule:** Chromium gets `--host-resolver-rules="MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"`. The exclusion is required because the rule also matches IP literals, including the proxy address. Chromium can therefore reach only the local egress proxy.
@@ -404,6 +411,10 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
   An unreachable journal refuses every attempt.
 
 ## ADR-059 — Process-death supervisor and fence-confirmation contract
+**Amended by ADR-075 (2026-11-19).**
+- **Linux unit:** a Linux containment unit is no longer a cgroup v2 unit. It is a user namespace owned by the supervisor's uid plus a PID namespace, inside a container dedicated to one incarnation, whose network namespace is the dedicated one.
+- **Proof of death:** "unit empty" is proven by reaping the unit wrapper plus an independent `/proc` scan, not by `cgroup.events`.
+- **Unchanged:** the evidence contract, the human-confirmation rules and the "never proof" list.
 - **Identity:**
   - every Worker registers an incarnation (GUID, host id, boot id, PID and start time, containment unit) before reserving anything;
   - every attempt is bound to it;
@@ -746,6 +757,79 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
   - handling `AwaitingFence` and `NeedsReview` records;
   - the audited operator fence procedure;
   - cancellation.
+## ADR-075 — Process-death containment: one Worker per container, nested user and PID namespaces, a supervisor with a scoped CAP_NET_ADMIN (Phase 5 step 7)
+**Status:** Accepted (user decision, Option 1, 2026-11-19). Amends ADR-059 (containment unit) and ADR-035 (container posture). It is **not** an unprivileged design: the supervisor holds one capability, `CAP_NET_ADMIN`, scoped to its own container's network namespace.
+- **Why:** ADR-059 specified a cgroup v2 unit. The approved environment mounts `/sys/fs/cgroup` read-only and must stay non-privileged (spike, docs/PHASE5_PLAN.md).
+  - Containment with unprivileged user and PID namespaces works.
+  - A *dedicated* network namespace created without privileges has no route anywhere. Connecting it needs `CAP_NET_ADMIN` in the container's own namespace.
+  - The step 7 spike measured both (2026-11-18/19).
+- **Rejected alternatives:**
+  - **Userspace forwarders (pasta, slirp4netns, relays):** they end the target's TCP connection outside the unit and can keep sending buffered bytes after the fence, which breaks E2 (ADR-060; P7, P8).
+  - **`setns` in the seccomp profile with a lab topology:** it verifies mechanisms only, and leaves the production Worker unable to reach targets.
+  - **cgroup v2 unverified:** it violates "claimed only when run".
+- **Topology (Linux, the hosted platform):**
+  - **One Worker incarnation per container.** Docker creates the container's network namespace and its kernel-level networking (veth/bridge). That namespace is the incarnation's dedicated network namespace. No userspace relay carries any traffic.
+  - **PID 1** is `tini` (`init: true`).
+  - **Root launcher** (`deploy/worker/af-worker-launch.sh`): it runs once at container start and creates the unit. It then `exec`s into the supervisor, so the supervisor is the unit wrapper's parent and tini's only child.
+  - **Unit:** a user namespace **owned by the supervisor's uid** (10002) that maps inner uid 1000 to the Worker's kernel uid 10001, plus a PID namespace.
+    - The unit's init is a small reaping shell that forwards `SIGTERM`. It runs the Worker with **zero capabilities** (permitted, effective, inheritable, ambient and bounding sets all empty) and `no_new_privs`.
+    - Chromium's own sandbox namespaces nest inside the unit. The Chromium sandbox stays on.
+  - **Supervisor:** uid 10002, its own uid, with `CAP_NET_ADMIN` only (effective, permitted, ambient; the bounding set holds `NET_ADMIN` alone) and `no_new_privs`. It is non-dumpable.
+    - It shares the container's network namespace with the unit, so it can `SOCK_DESTROY` there without `setns`.
+    - Through the user-namespace owner rule it holds every capability **inside the unit's user namespace only**: it can signal, inspect and kill unit tasks, and nothing else.
+  - **Container capabilities:** `cap_drop: ALL`, then `cap_add: NET_ADMIN, SETUID, SETGID, SETPCAP, SYS_CHROOT`.
+    - `SETUID`, `SETGID` and `SETPCAP` are used by the root launcher only: writing the unit's uid and gid maps, and dropping its own capabilities.
+    - `SYS_CHROOT` is needed only because Docker's seccomp profile allows `chroot` only when the container holds it, and Chromium's sandbox `chroot`s inside its own user namespace. The launcher clears it from every process it starts.
+    - Never `--privileged`, never `CAP_SYS_ADMIN`, and never `CAP_DAC_OVERRIDE`, `CAP_CHOWN` or `CAP_KILL`.
+    - The launcher **refuses to start** if the bounding set contains anything outside these five, or if seccomp is not in filter mode.
+- **Proof of death (`ProcessDeathConfirmed`, method `SupervisorUnitEmptyAndDrained`):**
+  1. Record the kill request.
+  2. `SIGKILL` every unit task and the wrapper.
+  3. Reap the wrapper. `unshare --fork` exits only after the namespace init, and the init's exit completes only after the kernel killed and reaped every task of the PID namespace and its descendants.
+  4. Scan `/proc` independently. Proof requires **no** task with the Worker's kernel uid, **no** task in the unit's user or PID namespace, and only PID 1 and the supervisor's own ancestors besides the supervisor itself. That allowed set is derived at run time and is never configurable.
+  5. Run the socket drain. A fence is reported only when steps 3 to 5 all hold. PID 1 exiting, a kill request, an expired lease, a stale heartbeat or a vanished PID is never proof.
+- **Socket drain in the shared container namespace (ADR-060 rules otherwise unchanged):**
+  - A complete `sock_diag` dump (IPv4 and IPv6, all states; truncation, errors or `NLM_F_DUMP_INTR` fail closed).
+  - **Ownership by inode:**
+    - sockets whose inode is in the supervisor's own fd table are the supervisor's and are excluded;
+    - inode 0 marks an orphan; after the proven-empty unit, orphans can only be the dead incarnation's (or the supervisor's own closed sockets);
+    - any other non-zero inode belongs to a live foreign process, which is ambiguous ownership. The drain waits and, at the deadline, reports **no fence**.
+  - The supervisor runs the drain with `Pooling=false` and no database I/O, so its own TCP set is empty.
+  - Transmit-capable orphans are destroyed by **exact cookie**. The kernel answers `ENOENT` both for "gone" and for a cookie mismatch (observed), so a destroy result is never trusted: only a re-enumeration showing every socket safe drains.
+  - The ledger cross-check (same tuple, other cookie means no fence) is unchanged. The ledger file is the one recorded in the incarnation, inside the unit's ledger directory, which must contain nothing else.
+- **Handshake (fail-closed Worker start, ADR-058):**
+  - **Supervisor at startup:**
+    - checks its own credentials (only `NET_ADMIN`, its own uid, non-dumpable);
+    - proves exact-cookie destroy with a live probe: a same-tuple replacement survives a stale-cookie destroy, and the exact cookie destroys (P11b at every start);
+    - checks the unit (wrapper is its child, unit user namespace owned by its uid, same network namespace, no foreign processes).
+  - **Worker:**
+    - checks its own credentials (no capabilities, `no_new_privs`, nested PID namespace);
+    - connects to the supervisor's Unix socket. Its directory is created by the supervisor's uid before the unit can run, and only the Worker's group may connect.
+    - The supervisor authenticates the peer by `SO_PEERCRED`: Worker uid, unit PID and user namespace, zero capabilities.
+    - It answers with the unit (`LinuxNamespaces`) and the ledger directory.
+    - The supervisor reads with plain `recv` and never installs passed file descriptors (`SCM_RIGHTS`), so the Worker cannot plant a socket in its fd table.
+- **Graceful stop:** `docker stop` sends `SIGTERM` through tini to the supervisor.
+  - The supervisor forwards it to the unit init and waits for the Worker's own shutdown (attempts cancel with barrier-fenced completions).
+  - It then kills, proves and drains as above, and fences whatever is still unfenced.
+  - `stop_grace_period` must exceed Worker shutdown plus the drain deadline.
+- **Lifecycle:** after a fence (or a failed proof) the supervisor exits, so the container exits and Docker's restart policy starts a **new** container: a fresh network namespace and a new incarnation.
+  - If the supervisor itself dies, tini exits and the kernel tears the container down, with no fence recorded (P6).
+  - Recovery of that incarnation's records then follows ADR-059: `AwaitingFence`, then `NeedsReview`, then an operator fence.
+- **Threat model and its limits:**
+  - **Proven against the OS:**
+    - the Worker and its descendants hold no capability;
+    - they cannot address the supervisor (separate PID namespace);
+    - they cannot signal or ptrace it (different uid, no capability in its user namespace; non-dumpable);
+    - they cannot leave the unit (PID and user namespace membership cannot be dropped; setuid binaries are inert under `no_new_privs` and unmapped owners).
+  - **Cross-container:** the supervisor's `CAP_NET_ADMIN` is scoped to its own container's network namespace. It cannot enter another (`setns` is denied) and sees only its own PID namespace.
+  - **Not claimed:** the Worker holds the same database credentials as the supervisor and could call `ConfirmFenceAsync` itself. The Worker process is trusted platform code; the untrusted party is web content inside the sandboxed browser. Separate database roles for fence confirmation are future hardening.
+  - **The root launcher** runs with five capabilities for the launch step only. That is narrower than Docker's defaults, but it is a root process at start.
+  - **The unit sees the container's `/proc`**: mount namespaces are denied by seccomp. Process identity inside the Worker is read from `/proc/self`, never by namespace-relative PID.
+- **Host-reboot proof (P5):** no automatic `SupervisorHostRebooted`. `HostId` is not unique across hosts in containers (`/etc/machine-id` comes from the image), so an automatic boot-id fence could fence a live Worker on another host. The boot-id proof stays at journal-validation level and in the operator's `HostRebootedVerified`.
+- **Windows:** no Job Object supervisor is delivered. A Windows Worker refuses to start (no handshake). The read-only owner-module table code exists but has not been run (Smart App Control).
+- **Verification:**
+  - A second container with the production posture runs the real launcher, the supervisor and the real Worker. Tests drive it through a test-only root agent over a Unix socket on a shared volume.
+  - P12 is unavailable: `sch_netem` cannot be loaded and the image has no `tc`.
 ## Resolved from the approval round (2026-11-11)
 1. SDK: selected from inspection, not blindly pinned (ADR-004). 2. PostgreSQL: Docker `postgres:18`, port 5433, volume (ADR-013). 3. Git initialized; commit after each verified phase; no secrets or generated artifacts. 4. Identity + JWT (ADR-010). 5. Hand-written validators (ADR-016). 6. Razor Pages Demo CRM (ADR-011). 7. Folder layout `src/ tests/ web/ deploy/ docs/`, React in `web/automataflow-web`. 8. 16-day target, 16–20 realistic; quality over deadline. 9. Frontend libraries deferred (ADR-019). 10. Playwright Chromium download approved for Phase 3.
 
