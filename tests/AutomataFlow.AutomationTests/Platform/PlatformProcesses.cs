@@ -34,6 +34,20 @@ internal sealed class RunningProcess(string name, Process process) : IAsyncDispo
 
     public string Tail(int lines = 60) => string.Join(Environment.NewLine, Output.TakeLast(lines));
 
+    public async Task<bool> WaitForExitAsync(TimeSpan timeout)
+    {
+        using var cancellation = new CancellationTokenSource(timeout);
+        try
+        {
+            await process.WaitForExitAsync(cancellation.Token);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         await KillAsync();
@@ -156,6 +170,10 @@ internal sealed class PlatformProcesses(PlatformRig rig) : IAsyncDisposable
 
         return worker;
     }
+
+    /// <summary>Starts the PRODUCTION Worker (with its production containment handshake) as a plain process.</summary>
+    public RunningProcess StartProductionWorker(Dictionary<string, string?>? overrides = null) =>
+        Start("ProductionWorker", Output("AutomataFlow.Worker", "src"), Environment(overrides));
 
     private Task<int> IncarnationsAsync() =>
         rig.QueryAsync(db => db.Database.SqlQuery<int>($"SELECT count(*)::int AS \"Value\" FROM \"WorkerIncarnations\"").SingleAsync());

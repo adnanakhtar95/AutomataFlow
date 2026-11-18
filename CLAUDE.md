@@ -89,6 +89,7 @@ On the primary dev machine Smart App Control is in enforcement mode and blocks f
 
 ### Browser engine rules (Phase 3, docs/BROWSER_ENGINE.md)
 - Since Phase 3 the verification script uses the pinned image `automataflow-verify:pw-<Playwright version>` (ADR-033). It runs non-root with `--init --shm-size=1g` and the seccomp profile `deploy/verify/chromium-seccomp.json`, so the Chromium sandbox is ON (ADR-035). Never use `--no-sandbox`, `--privileged` or `CAP_SYS_ADMIN`.
+- Since Phase 5 step 7 (ADR-075) the script also starts a SUPERVISION container with the production Worker posture: root launcher, `cap_drop: ALL` plus `NET_ADMIN, SETUID, SETGID, SETPCAP, SYS_CHROOT`. The supervisor keeps `CAP_NET_ADMIN` only; the Worker and Chromium hold no capability. The production Worker container (deploy/docker-compose.yml, profile `worker`) has the same posture; these are the only two places capabilities are added.
 - To upgrade Playwright, change the pin in `Directory.Packages.props` only; the image tag follows it and `VersionLockTests` catches any drift.
 - All browser traffic goes through the egress proxy, and the engine fails closed. Never add a code path that launches Chromium or creates a context without the per-session proxy credentials.
 - No script evaluation or injection APIs in Automation (source-scanned). Selectors are typed data.

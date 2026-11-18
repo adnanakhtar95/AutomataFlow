@@ -23,6 +23,8 @@
     <!-- Phase 5: the real Worker composition and persistence, run in-process against DemoCrm and PostgreSQL. -->
     <ProjectReference Include="..\..\src\AutomataFlow.Infrastructure\AutomataFlow.Infrastructure.csproj" />
     <ProjectReference Include="..\..\src\AutomataFlow.Worker\AutomataFlow.Worker.csproj" />
+    <!-- Step 7 (ADR-075): the supervisor's decision logic (with fakes) and its build output for the real-process tests. -->
+    <ProjectReference Include="..\..\src\AutomataFlow.Supervisor\AutomataFlow.Supervisor.csproj" />
     <!-- ADR-027: build-only edge. DemoCrm is launched as a separate process; its assembly is never referenced. -->
     <ProjectReference Include="..\..\src\DemoCrm\DemoCrm.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>

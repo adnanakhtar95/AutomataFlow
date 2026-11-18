@@ -38,15 +38,34 @@ public class PlatformSourceTests
     }
 
     /// <summary>
-    /// ADR-058/073: no production code may claim containment without a real supervisor handshake. Until step 7 delivers
-    /// the platform implementations, src contains the port only; the test handshake lives in the test-only host.
+    /// ADR-058/073/075: production code claims containment ONLY through the real supervisor handshake. Exactly one production
+    /// implementation exists, the Linux namespace handshake in the Worker; test handshakes live in test-only hosts.
     /// </summary>
     [Fact]
-    public void No_production_code_implements_the_containment_handshake_yet()
+    public void The_only_production_containment_handshake_is_the_Linux_namespace_handshake()
     {
         var implementations = ProductionSources()
             .Where(f => System.Text.RegularExpressions.Regex.IsMatch(File.ReadAllText(f), @"(class|record)\s+\w+[^{;]*:[^{;]*\bIContainmentHandshake\b"))
+            .Select(f => Path.GetRelativePath(ProjectGraph.RepositoryRoot, f).Replace('\\', '/'))
             .ToList();
-        Assert.Empty(implementations);
+        Assert.Equal(["src/AutomataFlow.Worker/LinuxNamespaceContainment.cs"], implementations);
+        Assert.Contains("class LinuxNamespaceContainmentHandshake", File.ReadAllText(Path.Combine(ProjectGraph.RepositoryRoot, "src", "AutomataFlow.Worker", "LinuxNamespaceContainment.cs")), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// ADR-075: the supervisor must never install a file descriptor passed by a peer (SCM_RIGHTS), or a Worker could plant a
+    /// socket the drain would treat as the supervisor's own. It reads with plain receives only.
+    /// </summary>
+    [Fact]
+    public void The_supervisor_never_receives_ancillary_data()
+    {
+        var supervisor = Directory.EnumerateFiles(Path.Combine(ProjectGraph.RepositoryRoot, "src", "AutomataFlow.Supervisor"), "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
+        Assert.All(supervisor, f =>
+        {
+            var text = File.ReadAllText(f);
+            Assert.DoesNotContain("ReceiveMessageFrom", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("recvmsg", text, StringComparison.Ordinal);
+        });
     }
 }

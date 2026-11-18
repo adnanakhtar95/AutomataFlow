@@ -14,6 +14,9 @@ public class DependencyGraphTests
         ["AutomataFlow.Api"] = ["AutomataFlow.Application", "AutomataFlow.Infrastructure"],
         ["AutomataFlow.Worker"] = ["AutomataFlow.Application", "AutomataFlow.Infrastructure", "AutomataFlow.Automation"],
 
+        // The process-death supervisor (ADR-075) is a host like the Worker; nothing references it (see below).
+        ["AutomataFlow.Supervisor"] = ["AutomataFlow.Application", "AutomataFlow.Infrastructure", "AutomataFlow.Automation"],
+
         // The fictional target application is fully independent of the platform (ADR-011, ADR-025).
         ["DemoCrm"] = [],
     };
@@ -25,6 +28,7 @@ public class DependencyGraphTests
     [InlineData("AutomataFlow.Automation")]
     [InlineData("AutomataFlow.Api")]
     [InlineData("AutomataFlow.Worker")]
+    [InlineData("AutomataFlow.Supervisor")]
     [InlineData("DemoCrm")]
     public void Source_project_references_match_the_approved_graph(string project)
     {
@@ -37,6 +41,9 @@ public class DependencyGraphTests
     private static readonly Dictionary<string, string[]> TestOnlyHosts = new()
     {
         ["AutomataFlow.WorkerTestHost"] = ["AutomataFlow.Worker"],
+
+        // Test-only root agent of the step 7 supervision container (ADR-075): references nothing, never shipped.
+        ["AutomataFlow.SupervisionAgent"] = [],
     };
 
     [Fact]
@@ -64,6 +71,7 @@ public class DependencyGraphTests
     {
         Assert.DoesNotContain("AutomataFlow.Automation", Graph.TransitiveReferences("AutomataFlow.Api"));
         Assert.DoesNotContain("AutomataFlow.Worker", Graph.TransitiveReferences("AutomataFlow.Api"));
+        Assert.DoesNotContain("AutomataFlow.Supervisor", Graph.TransitiveReferences("AutomataFlow.Api"));
     }
 
     [Fact]
@@ -84,6 +92,7 @@ public class DependencyGraphTests
         Assert.DoesNotContain("AutomataFlow.Automation", transitive);
         Assert.DoesNotContain("AutomataFlow.Api", transitive);
         Assert.DoesNotContain("AutomataFlow.Worker", transitive);
+        Assert.DoesNotContain("AutomataFlow.Supervisor", transitive);
     }
 
     [Fact]
@@ -157,7 +166,7 @@ public class DependencyGraphTests
     [Fact]
     public void AutomationTests_may_reference_only_Automation_DemoCrm_and_the_Worker_composition()
     {
-        var allowed = new[] { "AutomataFlow.Automation", "DemoCrm", "AutomataFlow.Infrastructure", "AutomataFlow.Worker" };
+        var allowed = new[] { "AutomataFlow.Automation", "DemoCrm", "AutomataFlow.Infrastructure", "AutomataFlow.Worker", "AutomataFlow.Supervisor" };
         Assert.DoesNotContain("AutomataFlow.Api", Graph.TransitiveReferences("AutomataFlow.AutomationTests"));
 
         Assert.All(Graph.DirectReferences("AutomataFlow.AutomationTests"), r => Assert.Contains(r, allowed));
@@ -171,13 +180,13 @@ public class DependencyGraphTests
     }
 
     [Fact]
-    public void Only_Api_and_Worker_reference_Infrastructure_among_source_projects()
+    public void Only_the_hosts_reference_Infrastructure_among_source_projects()
     {
         var referencing = ApprovedSourceReferences.Keys
             .Where(p => Graph.DirectReferences(p).Contains("AutomataFlow.Infrastructure"))
             .Order(StringComparer.Ordinal);
 
-        Assert.Equal(["AutomataFlow.Api", "AutomataFlow.Worker"], referencing);
+        Assert.Equal(["AutomataFlow.Api", "AutomataFlow.Supervisor", "AutomataFlow.Worker"], referencing);
     }
 
     [Fact]

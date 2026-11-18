@@ -49,19 +49,27 @@ internal sealed class PlatformRig : IAsyncDisposable
     private readonly string _server;
     private readonly string _database;
     private readonly List<IHost> _workers = [];
-    private readonly string _keys = Directory.CreateTempSubdirectory("af-keys-").FullName;
-    private readonly string _artifacts = Directory.CreateTempSubdirectory("af-artifacts-").FullName;
-    private readonly string _ledgers = Directory.CreateTempSubdirectory("af-ledgers-").FullName;
+    private readonly string _keys;
+    private readonly string _artifacts;
+    private readonly string _ledgers;
 
-    private PlatformRig(BrowserFixture fixture, string server, string database, string connectionString)
+    private PlatformRig(DemoCrmProcess demoCrm, string? sharedRoot, string server, string database, string connectionString)
     {
-        Fixture = fixture;
+        DemoCrm = demoCrm;
+        // A shared root (the step 7 supervision container mounts the same volume at the same path) lets Workers in another
+        // container decrypt secrets and store artifacts exactly as this rig expects.
+        string Dir(string name) => sharedRoot is null
+            ? Directory.CreateTempSubdirectory(name).FullName
+            : Directory.CreateDirectory(Path.Combine(sharedRoot, name + Guid.NewGuid().ToString("N")[..12])).FullName;
+        _keys = Dir("af-keys-");
+        _artifacts = Dir("af-artifacts-");
+        _ledgers = Dir("af-ledgers-");
         _server = server;
         _database = database;
         ConnectionString = connectionString;
     }
 
-    public BrowserFixture Fixture { get; }
+    public DemoCrmProcess DemoCrm { get; }
 
     public string ConnectionString { get; }
 
@@ -78,7 +86,9 @@ internal sealed class PlatformRig : IAsyncDisposable
     /// <summary>Everything the in-process Workers logged (for diagnosing failures; also used by leak checks).</summary>
     public CapturingLoggerProvider WorkerLogs { get; } = new();
 
-    public static async Task<PlatformRig> CreateAsync(BrowserFixture fixture)
+    public static Task<PlatformRig> CreateAsync(BrowserFixture fixture) => CreateAsync(fixture.DemoCrm, null);
+
+    public static async Task<PlatformRig> CreateAsync(DemoCrmProcess demoCrm, string? sharedRoot)
     {
         var server = Environment.GetEnvironmentVariable("AUTOMATAFLOW_TEST_DB")
             ?? throw new InvalidOperationException("Set AUTOMATAFLOW_TEST_DB to run the platform end-to-end tests.");
@@ -90,7 +100,7 @@ internal sealed class PlatformRig : IAsyncDisposable
             await create.ExecuteNonQueryAsync();
         }
 
-        var rig = new PlatformRig(fixture, server, name, new NpgsqlConnectionStringBuilder(server) { Database = name }.ConnectionString);
+        var rig = new PlatformRig(demoCrm, sharedRoot, server, name, new NpgsqlConnectionStringBuilder(server) { Database = name }.ConnectionString);
         await rig.InitializeAsync();
         return rig;
     }
@@ -101,7 +111,7 @@ internal sealed class PlatformRig : IAsyncDisposable
         Settings["DataProtection:KeysDirectory"] = _keys;
         Settings["Artifacts:RootDirectory"] = _artifacts;
         Settings["Automation:Browser:Mode"] = "Development";
-        Settings["Automation:Browser:DevelopmentPrivateNetworkOrigins:0"] = Fixture.DemoCrm.BaseUrl;
+        Settings["Automation:Browser:DevelopmentPrivateNetworkOrigins:0"] = DemoCrm.BaseUrl;
         Settings["Automation:EgressProxy:LedgerDirectory"] = _ledgers;
         Settings["Worker:PollIntervalMilliseconds"] = "200";
         Settings["Worker:HeartbeatSeconds"] = "2";
@@ -115,7 +125,7 @@ internal sealed class PlatformRig : IAsyncDisposable
         services.AddLogging();
         services.AddInfrastructure(configuration);
         services.AddPlatformServices();
-        services.AddScoped<ICurrentUser>(_ => new RigUser(User, Organization));
+        services.AddScoped<ICurrentUser>(_ => new RigUser(ActingUser, ActingOrganization));
         Platform = services.BuildServiceProvider();
 
         await using var scope = Platform.CreateAsyncScope();
@@ -130,12 +140,45 @@ internal sealed class PlatformRig : IAsyncDisposable
         await db.SaveChangesAsync();
     }
 
-    /// <summary>Runs a use case in a fresh scope bound to the rig's organization.</summary>
+    private readonly AsyncLocal<(Guid User, Guid Organization)?> _actingAs = new();
+
+    private Guid ActingUser => _actingAs.Value?.User ?? User;
+
+    private Guid ActingOrganization => _actingAs.Value?.Organization ?? Organization;
+
+    /// <summary>Within the returned scope, the rig's use cases act for ANOTHER organization's Owner (cross-tenant tests).</summary>
+    public IDisposable ActAs(Guid organization, Guid user)
+    {
+        _actingAs.Value = (user, organization);
+        return new Restore(() => _actingAs.Value = null);
+    }
+
+    private sealed class Restore(Action undo) : IDisposable
+    {
+        public void Dispose() => undo();
+    }
+
+    /// <summary>Creates a second organization with its own Owner (for cross-tenant tests).</summary>
+    public async Task<(Guid Organization, Guid User)> AddOrganizationAsync()
+    {
+        var user = Guid.CreateVersion7();
+        var organization = AutomataFlow.Domain.Organizations.Organization.Create("Other", "other-" + Guid.NewGuid().ToString("N")[..12], DateTimeOffset.UtcNow);
+        await using var scope = Platform.CreateAsyncScope();
+        scope.ServiceProvider.GetRequiredService<TenantScope>().Enter(organization.Id);
+        var db = scope.ServiceProvider.GetRequiredService<AutomataFlowDbContext>();
+        db.Users.Add(new ApplicationUser { Id = user, UserName = $"owner-{user:N}@example.test", Email = $"owner-{user:N}@example.test", CreatedAt = DateTimeOffset.UtcNow });
+        db.Organizations.Add(organization);
+        db.OrganizationMembers.Add(OrganizationMember.Create(organization.Id, user, OrganizationRole.Owner, DateTimeOffset.UtcNow));
+        await db.SaveChangesAsync();
+        return (organization.Id, user);
+    }
+
+    /// <summary>Runs a use case in a fresh scope bound to the acting organization (the rig's own unless <see cref="ActAs"/>).</summary>
     public async Task<T> AsOwnerAsync<TService, T>(Func<TService, Task<T>> action)
         where TService : notnull
     {
         await using var scope = Platform.CreateAsyncScope();
-        scope.ServiceProvider.GetRequiredService<TenantScope>().Enter(Organization);
+        scope.ServiceProvider.GetRequiredService<TenantScope>().Enter(ActingOrganization);
         return await action(scope.ServiceProvider.GetRequiredService<TService>());
     }
 
@@ -145,14 +188,14 @@ internal sealed class PlatformRig : IAsyncDisposable
         Assert.Equal(ServiceStatus.Ok, created.Status);
         var published = await AsOwnerAsync<WorkflowService, ServiceResult<VersionSummary>>(w => w.PublishAsync(created.Value!.WorkflowId, created.Value.Version.Id, true, default));
         Assert.Equal(ServiceStatus.Ok, published.Status);
-        await AsOwnerAsync<SecretService, bool>(s => s.SetAsync(Organization, "crmPassword", "DemoPass-2026!", default));
+        await AsOwnerAsync<SecretService, bool>(s => s.SetAsync(ActingOrganization, "crmPassword", "DemoPass-2026!", default));
         return created.Value!.Version.Id;
     }
 
     public async Task<Guid> CreateJobAsync(Guid version, string csv, JobOptions? options = null)
     {
         await using var content = new MemoryStream(Encoding.UTF8.GetBytes(csv));
-        var parameters = new Dictionary<string, string> { ["crmBaseUrl"] = Fixture.DemoCrm.BaseUrl, ["crmUser"] = "agent@democrm.test" };
+        var parameters = new Dictionary<string, string> { ["crmBaseUrl"] = DemoCrm.BaseUrl, ["crmUser"] = "agent@democrm.test" };
         var created = await AsOwnerAsync<JobService, ServiceResult<JobCreated>>(j =>
             j.CreateAsync(new CreateJobCommand(version, parameters, options ?? new JobOptions(2, 3, 1), null, content, "records.csv", ImportFormat.Csv), default));
         Assert.Equal(ServiceStatus.Ok, created.Status);

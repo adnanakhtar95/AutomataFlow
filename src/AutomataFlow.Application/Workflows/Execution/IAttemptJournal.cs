@@ -12,6 +12,12 @@ public enum ContainmentKind
 
     /// <summary>Windows Job Object created by the supervisor.</summary>
     WindowsJobObject,
+
+    /// <summary>
+    /// Linux (ADR-075): a container dedicated to one incarnation; the unit is a user namespace owned by the supervisor's uid
+    /// plus a PID namespace, and the container's network namespace is the incarnation's dedicated one.
+    /// </summary>
+    LinuxNamespaces,
 }
 
 /// <summary>The containment unit holding every process that can act for an incarnation's attempts.</summary>

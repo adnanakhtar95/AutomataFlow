@@ -18,6 +18,31 @@ public static class HostIdentity
     /// Linux: the kernel's boot id. Windows: the boot time (seconds precision), derived from the uptime counter; the
     /// supervisor compares it with a tolerance before ever claiming a reboot (step 7).
     /// </summary>
+    /// <summary>
+    /// This process's id and start time. Linux: from <c>/proc/self</c> (the first <c>NSpid</c> entry is the id in the PID
+    /// namespace of the mounted <c>/proc</c>, i.e. the container's; inside a unit <see cref="Environment.ProcessId"/> is
+    /// namespace-relative and must not be used to read <c>/proc</c>). Diagnostic only, never proof (§7.5.1).
+    /// </summary>
+    public static (int ProcessId, DateTimeOffset StartedAt) SelfProcess()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            using var process = Process.GetCurrentProcess();
+            return (Environment.ProcessId, new DateTimeOffset(process.StartTime.ToUniversalTime(), TimeSpan.Zero));
+        }
+
+        var status = File.ReadAllLines("/proc/self/status");
+        var nspid = status.FirstOrDefault(l => l.StartsWith("NSpid:", StringComparison.Ordinal))?.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        var id = nspid is { Length: > 1 } ? int.Parse(nspid[1], System.Globalization.CultureInfo.InvariantCulture) : Environment.ProcessId;
+
+        // /proc/self/stat field 22 = start time in clock ticks after boot (USER_HZ = 100 on Linux); btime = boot time.
+        var stat = File.ReadAllText("/proc/self/stat");
+        var afterName = stat[(stat.LastIndexOf(')') + 2)..].Split(' ');
+        var ticks = long.Parse(afterName[19], System.Globalization.CultureInfo.InvariantCulture);
+        var btime = long.Parse(File.ReadAllLines("/proc/stat").First(l => l.StartsWith("btime ", StringComparison.Ordinal))[6..], System.Globalization.CultureInfo.InvariantCulture);
+        return (id, DateTimeOffset.FromUnixTimeSeconds(btime).AddMilliseconds(ticks * 10));
+    }
+
     public static string BootId() => OperatingSystem.IsLinux()
         ? File.ReadAllText("/proc/sys/kernel/random/boot_id").Trim()
         : "boot-time:" + (DateTimeOffset.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64)).ToString("yyyy-MM-ddTHH:mm:ssZ", System.Globalization.CultureInfo.InvariantCulture);
@@ -26,7 +51,7 @@ public static class HostIdentity
 /// <summary>
 /// Startup checks (ADR-058 rule 2, §7.4): a Worker executes nothing unless every check passes. There is no override.
 /// </summary>
-public sealed class WorkerStartup(IServiceProvider services, IAttemptJournal journal, IConfiguration configuration, IOptions<EgressProxyOptions> egress)
+public sealed class WorkerStartup(IServiceProvider services, IAttemptJournal journal, IConfiguration configuration)
 {
     /// <summary>The longest permitted side-effect step (WorkflowLimits.MaxStepTimeoutMs).</summary>
     public static readonly TimeSpan LongestSideEffectStep = TimeSpan.FromSeconds(120);
@@ -82,9 +107,12 @@ public sealed class WorkerStartup(IServiceProvider services, IAttemptJournal jou
             return (null, problems);
         }
 
-        using var process = Process.GetCurrentProcess();
-        var incarnation = new WorkerIncarnation(new WorkerIncarnationId(Guid.NewGuid()), HostIdentity.HostId(), HostIdentity.BootId(), Environment.ProcessId,
-            new DateTimeOffset(process.StartTime.ToUniversalTime(), TimeSpan.Zero), unit, egress.Value.LedgerDirectory ?? string.Empty);
+        // The ledger file exists from now on (W5: every upstream connection is appended before payload), so the supervisor
+        // drains exactly this file; a missing ledger would mean "no fence" (ADR-075).
+        var ledger = services.GetRequiredService<IConnectionLedger>();
+        var (processId, startedAt) = HostIdentity.SelfProcess();
+        var incarnation = new WorkerIncarnation(new WorkerIncarnationId(Guid.NewGuid()), HostIdentity.HostId(), HostIdentity.BootId(), processId,
+            startedAt, unit, ledger.Path);
         try
         {
             await journal.RegisterIncarnationAsync(incarnation, cancellationToken);

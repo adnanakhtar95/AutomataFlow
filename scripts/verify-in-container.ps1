@@ -9,6 +9,9 @@
   - Chromium runs WITH its sandbox, as a non-root user, under deploy/verify/chromium-seccomp.json (ADR-035).
   - Source is copied into the container (bin/obj/.git excluded); the working tree is never modified.
   - Database tests use the compose PostgreSQL (port from deploy/.env, default 5433) via host.docker.internal.
+  - Step 7 (ADR-075): a second, SUPERVISION container with the production Worker posture (root launcher; cap_drop ALL
+    plus NET_ADMIN, SETUID, SETGID, SETPCAP, SYS_CHROOT; same seccomp profile) runs the real launcher, supervisor and
+    Worker for the process-death tests. Network, volume and container are created per run and always removed.
 
   Prerequisites: Docker running, deploy/.env created from deploy/.env.example, and
     docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d postgres
@@ -51,21 +54,64 @@ if ($RebuildImage -or $LASTEXITCODE -ne 0) {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
+# ---------------------------------------------------------------------------------------------------------------------
+# Step 7 (ADR-075): besides the main test container, a SUPERVISION container with the exact production Worker posture
+# (root launcher; cap_drop ALL + NET_ADMIN, SETUID, SETGID, SETPCAP, SYS_CHROOT; same seccomp profile) runs the
+# real launcher, supervisor and Worker, driven by a test-only root agent over a Unix socket on a shared volume. Both
+# containers mount the volume at /work, so build output, keys and artifacts have identical paths in both. They share a
+# private network: the main container is "tests", the supervision container is "workers". Never --privileged, never
+# CAP_SYS_ADMIN. Everything is removed afterwards.
+# ---------------------------------------------------------------------------------------------------------------------
+$runId = [guid]::NewGuid().ToString('N').Substring(0, 10)
+$network = "af-verify-$runId"
+$volume = "af-work-$runId"
+$supervision = "af-supervision-$runId"
+$seccomp = Join-Path $root 'deploy/verify/chromium-seccomp.json'
+
 $script = @'
 set -e
-mkdir -p ~/work && cd /src
-tar cf - --exclude=./.git --exclude=./.vs --exclude=bin --exclude=obj . | tar xf - -C ~/work
-cd ~/work
+cd /src
+tar cf - --exclude=./.git --exclude=./.vs --exclude=bin --exclude=obj . | tar xf - -C /work/src
+cd /work/src
 dotnet build AutomataFlow.slnx
+touch /work/.built
 dotnet test AutomataFlow.slnx --no-build __FILTER__
 '@ -replace "`r", ''
 $filterArgument = if ($Filter) { "--filter '" + ($Filter -replace "'", "") + "'" } else { '' }
 $script = $script.Replace('__FILTER__', $filterArgument)
 
-docker run --rm --init --shm-size=1g `
-    --security-opt "seccomp=$(Join-Path $root 'deploy/verify/chromium-seccomp.json')" `
-    -v "${root}:/src:ro" `
-    -e "AUTOMATAFLOW_TEST_DB=$testDb" `
-    $image bash -c $script
+$agent = 'while [ ! -f /work/.built ]; do sleep 1; done; exec dotnet /work/src/tests/AutomataFlow.SupervisionAgent/bin/Debug/net10.0/AutomataFlow.SupervisionAgent.dll /work/agent/agent.sock /work/agent/logs'
 
-exit $LASTEXITCODE
+$exitCode = 1
+try {
+    docker network create $network | Out-Null
+    docker volume create $volume | Out-Null
+    # One-off ownership setup of the empty volume (the default capability set is used only for this chown step).
+    docker run --rm --user root -v "${volume}:/work" $image sh -c 'mkdir -p /work/src /work/shared /work/agent/logs && chown -R 10001:10001 /work /work/shared && chmod 1777 /work/agent /work/agent/logs'
+    if ($LASTEXITCODE -ne 0) { throw 'volume setup failed' }
+
+    docker run -d --name $supervision --network $network --network-alias workers --init --user root --shm-size=1g `
+        --cap-drop ALL --cap-add NET_ADMIN --cap-add SETUID --cap-add SETGID --cap-add SETPCAP --cap-add SYS_CHROOT `
+        --security-opt "seccomp=$seccomp" -v "${volume}:/work" $image bash -c $agent | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'supervision container failed to start' }
+
+    docker run --rm --init --shm-size=1g --network $network --network-alias tests `
+        --security-opt "seccomp=$seccomp" `
+        -v "${root}:/src:ro" -v "${volume}:/work" `
+        -e "AUTOMATAFLOW_TEST_DB=$testDb" `
+        -e "AUTOMATAFLOW_SUPERVISION_AGENT=/work/agent/agent.sock" `
+        -e "AUTOMATAFLOW_SHARED_DIRECTORY=/work/shared" `
+        $image bash -c $script
+    $exitCode = $LASTEXITCODE
+}
+finally {
+    if ($exitCode -ne 0) {
+        Write-Host "--- supervision container log (tail) ---"
+        docker logs --tail 80 $supervision 2>&1 | Write-Host
+    }
+    docker rm -f $supervision 2>&1 | Out-Null
+    docker volume rm -f $volume 2>&1 | Out-Null
+    docker network rm $network 2>&1 | Out-Null
+}
+
+exit $exitCode

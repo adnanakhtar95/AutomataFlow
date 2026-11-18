@@ -192,6 +192,16 @@ public sealed class ConnectionDrain
             }
         }
 
+        // ADR-075: the namespace is shared with the supervisor, whose own sockets the reader already excluded. A connection
+        // socket still held by any OTHER live process is ambiguous ownership: never destroyed, never "drained" (wait, then
+        // fail). Only a LISTENING socket of a live process (e.g. Docker's embedded DNS resolver on 127.0.0.11, owned by the
+        // daemon outside the container) is not: a listener carries no payload; its not-yet-accepted connections have no
+        // owner (inode 0) and are drained like every other orphan.
+        if (snapshot.Sockets.Any(s => s.OwnedByLiveProcess && s.State != TcpConnectionState.Listen))
+        {
+            return StepOutcome.Wait("live-foreign-owner");
+        }
+
         var transmitCapable = snapshot.Sockets.Where(s => !IsSafe(s.State)).ToList();
         if (transmitCapable.Count == 0)
         {

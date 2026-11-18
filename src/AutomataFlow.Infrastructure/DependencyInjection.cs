@@ -118,6 +118,7 @@ public static class DependencyInjection
             sp.GetRequiredKeyedService<Npgsql.NpgsqlDataSource>(JournalDataSourceKey),
             sp.GetRequiredService<Application.Workflows.Execution.IAttemptJournal>(),
             sp.GetRequiredService<TimeProvider>()));
+        services.AddSingleton(sp => new Persistence.Journal.SupervisedIncarnations(sp.GetRequiredKeyedService<Npgsql.NpgsqlDataSource>(JournalDataSourceKey)));
         return services;
     }
 

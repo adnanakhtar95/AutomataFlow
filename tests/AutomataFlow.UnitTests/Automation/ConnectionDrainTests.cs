@@ -68,6 +68,44 @@ public class ConnectionDrainTests
         Assert.Single(destroyer.Calls);
     }
 
+    [Fact]
+    public async Task Linux_a_socket_held_by_a_live_foreign_process_is_never_destroyed_and_never_drained()
+    {
+        // ADR-075: the container's namespace is shared with the supervisor; any OTHER live owner is ambiguous.
+        var foreign = new ObservedSocket(IPEndPoint.Parse("10.0.0.2:40100"), Remote, TcpConnectionState.Established, new ConnectionIdentity(ConnectionIdentityKind.LinuxSocketCookie, 5), OwnedByLiveProcess: true);
+        var destroyer = new ScriptedDestroyer(throwIfCalled: true);
+
+        var report = await Run(DrainPlatform.LinuxNamespace, Ledger(Cookie), new ScriptedTable(Table(foreign)), destroyer);
+
+        Assert.False(report.IsDrained);
+        Assert.Equal("partial-drain:live-foreign-owner", report.Reason);
+        Assert.Empty(destroyer.Calls);
+    }
+
+    [Theory]
+    [InlineData(TcpConnectionState.Listen, true)]       // a live listener (Docker's embedded DNS on 127.0.0.11) carries no payload
+    [InlineData(TcpConnectionState.TimeWait, false)]    // every other live foreign owner stays ambiguous, even in a "safe" state
+    [InlineData(TcpConnectionState.SynSent, false)]
+    [InlineData(TcpConnectionState.Established, false)]
+    public async Task Linux_only_a_listening_socket_of_a_live_foreign_process_is_not_ambiguous(TcpConnectionState state, bool drained)
+    {
+        var foreign = new ObservedSocket(IPEndPoint.Parse("127.0.0.11:36527"), IPEndPoint.Parse("0.0.0.0:0"), state, new ConnectionIdentity(ConnectionIdentityKind.LinuxSocketCookie, 6), OwnedByLiveProcess: true);
+
+        var report = await Run(DrainPlatform.LinuxNamespace, Ledger(Cookie), new ScriptedTable(Table(foreign)), new ScriptedDestroyer(throwIfCalled: true));
+
+        Assert.Equal(drained, report.IsDrained);
+    }
+
+    [Fact]
+    public async Task Linux_a_foreign_owner_that_disappears_before_the_deadline_lets_the_drain_complete()
+    {
+        var foreign = new ObservedSocket(IPEndPoint.Parse("10.0.0.2:40100"), Remote, TcpConnectionState.Established, new ConnectionIdentity(ConnectionIdentityKind.LinuxSocketCookie, 5), OwnedByLiveProcess: true);
+
+        var report = await Run(DrainPlatform.LinuxNamespace, Ledger(Cookie), new ScriptedTable(Table(foreign), Table()), new ScriptedDestroyer(throwIfCalled: true));
+
+        Assert.True(report.IsDrained);
+    }
+
     [Theory]
     [InlineData(DestroyOutcome.Unsupported, "destroy-unsupported")]
     [InlineData(DestroyOutcome.PermissionDenied, "destroy-permission-denied")]

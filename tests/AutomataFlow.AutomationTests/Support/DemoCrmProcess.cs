@@ -10,14 +10,15 @@ namespace AutomataFlow.AutomationTests.Support;
 /// Launches DemoCrm as a real, separate process on 127.0.0.1 (ADR-027/029): a real browser cannot reach
 /// WebApplicationFactory's in-memory server. The control token is random per run and never written to disk.
 /// </summary>
-public sealed partial class DemoCrmProcess : IAsyncDisposable
+public sealed partial class DemoCrmProcess(string bindAddress = "127.0.0.1", string publicHost = "127.0.0.1") : IAsyncDisposable
 {
     private readonly HttpClient _http = new();
     private Process? _process;
 
     public int Port { get; private set; }
 
-    public string BaseUrl => $"http://127.0.0.1:{Port}";
+    /// <summary>The address other processes (and, for the supervision tests, other containers) reach DemoCrm at.</summary>
+    public string BaseUrl => $"http://{publicHost}:{Port}";
 
     public string ControlToken { get; } = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(24));
 
@@ -46,7 +47,7 @@ public sealed partial class DemoCrmProcess : IAsyncDisposable
             throw new InvalidOperationException($"DemoCrm build output not found at {assembly}. Build the solution first.");
         }
 
-        var start = new ProcessStartInfo("dotnet", [assembly, "--urls", "http://127.0.0.1:0"])
+        var start = new ProcessStartInfo("dotnet", [assembly, "--urls", $"http://{bindAddress}:0"])
         {
             WorkingDirectory = projectDirectory,
             RedirectStandardOutput = true,
@@ -54,6 +55,7 @@ public sealed partial class DemoCrmProcess : IAsyncDisposable
             UseShellExecute = false,
         };
         start.Environment["ASPNETCORE_ENVIRONMENT"] = "Production";
+        start.Environment["AllowedHosts"] = $"localhost;127.0.0.1;[::1];{publicHost}"; // the supervision tests reach it as "tests"
         start.Environment["DemoCrm__ControlApi__Token"] = ControlToken;
         start.Environment["DemoCrm__Simulation__SlowDelayMs"] = "200";
         // 9 s keeps the late commit clearly after an "immediate" reconcile (which first signs in) while staying inside the
@@ -134,6 +136,6 @@ public sealed partial class DemoCrmProcess : IAsyncDisposable
         _http.Dispose();
     }
 
-    [GeneratedRegex(@"Now listening on: http://127\.0\.0\.1:(\d+)")]
+    [GeneratedRegex(@"Now listening on: http://[^:/\s]+:(\d+)")]
     private static partial Regex ListeningPattern();
 }

@@ -769,8 +769,8 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
   - **cgroup v2 unverified:** it violates "claimed only when run".
 - **Topology (Linux, the hosted platform):**
   - **One Worker incarnation per container.** Docker creates the container's network namespace and its kernel-level networking (veth/bridge). That namespace is the incarnation's dedicated network namespace. No userspace relay carries any traffic.
-  - **PID 1** is `tini` (`init: true`).
-  - **Root launcher** (`deploy/worker/af-worker-launch.sh`): it runs once at container start and creates the unit. It then `exec`s into the supervisor, so the supervisor is the unit wrapper's parent and tini's only child.
+  - **PID 1 is the supervisor.** The launcher starts as PID 1 and `exec`s into the supervisor, so Docker delivers `SIGTERM` straight to it and it reaps its only child, the unit wrapper. **Docker's `--init` (tini) must not be used.** tini runs as root without `CAP_KILL` (every capability is dropped), so it cannot forward `SIGTERM` to the supervisor's uid. It dies with "Operation not permitted" and the container is torn down without a fence. The production-image smoke test found this.
+  - **Root launcher** (`deploy/worker/af-worker-launch.sh`): it runs once at container start and creates the unit. It then `exec`s into the supervisor, so the supervisor is the unit wrapper's parent and PID 1.
   - **Unit:** a user namespace **owned by the supervisor's uid** (10002) that maps inner uid 1000 to the Worker's kernel uid 10001, plus a PID namespace.
     - The unit's init is a small reaping shell that forwards `SIGTERM`. It runs the Worker with **zero capabilities** (permitted, effective, inheritable, ambient and bounding sets all empty) and `no_new_privs`.
     - Chromium's own sandbox namespaces nest inside the unit. The Chromium sandbox stays on.
@@ -782,6 +782,13 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
     - `SYS_CHROOT` is needed only because Docker's seccomp profile allows `chroot` only when the container holds it, and Chromium's sandbox `chroot`s inside its own user namespace. The launcher clears it from every process it starts.
     - Never `--privileged`, never `CAP_SYS_ADMIN`, and never `CAP_DAC_OVERRIDE`, `CAP_CHOWN` or `CAP_KILL`.
     - The launcher **refuses to start** if the bounding set contains anything outside these five, or if seccomp is not in filter mode.
+    - **Filter mode alone does not prove the profile.** Docker Desktop attaches a filter even with `seccomp=unconfined`. The supervisor therefore checks **behaviourally** that a profile derived from Docker's default is enforced: `keyctl`, which such profiles deny because the keyring is not namespaced, must fail with EPERM. Otherwise startup is refused and the Worker never starts.
+      - The probe cannot tell the approved profile from Docker's default. The default would break the Chromium sandbox, so the Worker could not run browsers under it.
+    - **Checked manually, not by the automated suite** (2026-11-19, against the built production image `deploy/worker/Dockerfile`):
+      - Docker's default capability set, `--privileged` and an added `CAP_SYS_ADMIN` are each refused by the launcher;
+      - `seccomp=unconfined` is refused by the supervisor;
+      - the approved posture passes both checks.
+  - **Volume permissions:** the supervisor is in the Worker's group for the ledger and handshake directories **only**. The Data Protection key ring, the artifacts and the Worker's home are owner-only (0700, uid 10001). Without that, the supervisor's database credentials plus a readable key ring could decrypt tenant secrets. The Api must run as uid 10001 against these volumes (Phase 7 full stack).
 - **Proof of death (`ProcessDeathConfirmed`, method `SupervisorUnitEmptyAndDrained`):**
   1. Record the kill request.
   2. `SIGKILL` every unit task and the wrapper.
@@ -794,12 +801,14 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
     - sockets whose inode is in the supervisor's own fd table are the supervisor's and are excluded;
     - inode 0 marks an orphan; after the proven-empty unit, orphans can only be the dead incarnation's (or the supervisor's own closed sockets);
     - any other non-zero inode belongs to a live foreign process, which is ambiguous ownership. The drain waits and, at the deadline, reports **no fence**.
+    - **One exception: a listening socket.** A listener carries no payload of any connection, so it is never ambiguous. The case that matters is Docker's embedded DNS resolver, which the daemon injects on `127.0.0.11` into every container on a user-defined network (found by the step 7 tests). Connections still queued on such a listener are not yet accepted, have inode 0, and are drained like every other orphan.
   - The supervisor runs the drain with `Pooling=false` and no database I/O, so its own TCP set is empty.
   - Transmit-capable orphans are destroyed by **exact cookie**. The kernel answers `ENOENT` both for "gone" and for a cookie mismatch (observed), so a destroy result is never trusted: only a re-enumeration showing every socket safe drains.
   - The ledger cross-check (same tuple, other cookie means no fence) is unchanged. The ledger file is the one recorded in the incarnation, inside the unit's ledger directory, which must contain nothing else.
 - **Handshake (fail-closed Worker start, ADR-058):**
   - **Supervisor at startup:**
     - checks its own credentials (only `NET_ADMIN`, its own uid, non-dumpable);
+    - proves the approved seccomp profile is enforced (the `keyctl` probe above);
     - proves exact-cookie destroy with a live probe: a same-tuple replacement survives a stale-cookie destroy, and the exact cookie destroys (P11b at every start);
     - checks the unit (wrapper is its child, unit user namespace owned by its uid, same network namespace, no foreign processes).
   - **Worker:**
@@ -808,12 +817,12 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
     - The supervisor authenticates the peer by `SO_PEERCRED`: Worker uid, unit PID and user namespace, zero capabilities.
     - It answers with the unit (`LinuxNamespaces`) and the ledger directory.
     - The supervisor reads with plain `recv` and never installs passed file descriptors (`SCM_RIGHTS`), so the Worker cannot plant a socket in its fd table.
-- **Graceful stop:** `docker stop` sends `SIGTERM` through tini to the supervisor.
+- **Graceful stop:** `docker stop` sends `SIGTERM` to the supervisor (PID 1). Verified on the production image: exit 0, `Worker stopped`, then an accepted `ProcessDeathConfirmed`.
   - The supervisor forwards it to the unit init and waits for the Worker's own shutdown (attempts cancel with barrier-fenced completions).
   - It then kills, proves and drains as above, and fences whatever is still unfenced.
   - `stop_grace_period` must exceed Worker shutdown plus the drain deadline.
-- **Lifecycle:** after a fence (or a failed proof) the supervisor exits, so the container exits and Docker's restart policy starts a **new** container: a fresh network namespace and a new incarnation.
-  - If the supervisor itself dies, tini exits and the kernel tears the container down, with no fence recorded (P6).
+- **Lifecycle:** after a fence (or a failed proof) the supervisor exits, so the container exits and Docker's restart policy restarts it with **fresh** PID and network namespaces and a new incarnation. The writable layer survives a restart, but every launch uses new random directories for its ledger, handshake socket and home.
+  - If the supervisor (PID 1) dies, the container stops and the kernel kills the unit, with no fence recorded (P6).
   - Recovery of that incarnation's records then follows ADR-059: `AwaitingFence`, then `NeedsReview`, then an operator fence.
 - **Threat model and its limits:**
   - **Proven against the OS:**
@@ -829,6 +838,8 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
 - **Windows:** no Job Object supervisor is delivered. A Windows Worker refuses to start (no handshake). The read-only owner-module table code exists but has not been run (Smart App Control).
 - **Verification:**
   - A second container with the production posture runs the real launcher, the supervisor and the real Worker. Tests drive it through a test-only root agent over a Unix socket on a shared volume.
+    - One difference: that container uses `--init`, because the agent, not the supervisor, is its long-lived process; the supervisor under test is therefore not PID 1.
+    - The supervisor-as-PID-1 path is verified on the built production image: graceful `docker stop` gives exit 0, `Worker stopped` and an accepted fence row.
   - P12 is unavailable: `sch_netem` cannot be loaded and the image has no `tc`.
 ## Resolved from the approval round (2026-11-11)
 1. SDK: selected from inspection, not blindly pinned (ADR-004). 2. PostgreSQL: Docker `postgres:18`, port 5433, volume (ADR-013). 3. Git initialized; commit after each verified phase; no secrets or generated artifacts. 4. Identity + JWT (ADR-010). 5. Hand-written validators (ADR-016). 6. Razor Pages Demo CRM (ADR-011). 7. Folder layout `src/ tests/ web/ deploy/ docs/`, React in `web/automataflow-web`. 8. 16-day target, 16–20 realistic; quality over deadline. 9. Frontend libraries deferred (ADR-019). 10. Playwright Chromium download approved for Phase 3.

@@ -7,6 +7,43 @@ namespace AutomataFlow.Infrastructure.Persistence.Journal;
 public sealed record IncarnationView(Guid Id, string HostId, string BootId, int ProcessId, string UnitKind, string UnitName,
     DateTimeOffset RegisteredAt, DateTimeOffset LastHeartbeatAt, int UnfencedAttempts);
 
+/// <summary>The incarnation registered for a supervisor's unit, and its liveness by the DATABASE clock.</summary>
+public sealed record SupervisedIncarnation(WorkerIncarnation Incarnation, DateTimeOffset LastHeartbeatAt, DateTimeOffset DatabaseNow);
+
+/// <summary>
+/// The process-death supervisor's read of the journal (ADR-075): the one incarnation registered for its containment unit.
+/// Two registrations for one unit are ambiguous and throw (a unit holds exactly one incarnation).
+/// </summary>
+public sealed class SupervisedIncarnations(NpgsqlDataSource source)
+{
+    public async Task<SupervisedIncarnation?> FindAsync(ContainmentUnit unit, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(unit);
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand("""
+            SELECT "Id","HostId","BootId","ProcessId","ProcessStartTime","ConnectionLedger","LastHeartbeatAt", now()
+            FROM "WorkerIncarnations" WHERE "UnitKind" = @kind AND "UnitName" = @name LIMIT 2
+            """, connection);
+        command.Parameters.AddWithValue("kind", unit.Kind.ToString());
+        command.Parameters.AddWithValue("name", unit.Name);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        SupervisedIncarnation? found = null;
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            if (found is not null)
+            {
+                throw new InvalidOperationException("More than one incarnation is registered for one containment unit.");
+            }
+
+            var incarnation = new WorkerIncarnation(new WorkerIncarnationId(reader.GetGuid(0)), reader.GetString(1), reader.GetString(2), reader.GetInt32(3),
+                reader.GetFieldValue<DateTimeOffset>(4), unit, reader.GetString(5));
+            found = new SupervisedIncarnation(incarnation, reader.GetFieldValue<DateTimeOffset>(6), reader.GetFieldValue<DateTimeOffset>(7));
+        }
+
+        return found;
+    }
+}
+
 /// <param name="Drain">Required for <see cref="FenceMethod.DrainVerified"/>: the supervisor tool's drain report.</param>
 public sealed record HumanFenceRequest(Guid IncarnationId, FenceMethod Method, string EvidenceReference, bool AttestedPersonally, string? CurrentBootId, DrainReport? Drain);
 

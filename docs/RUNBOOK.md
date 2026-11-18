@@ -38,9 +38,48 @@ A Worker executes nothing unless:
 
 There is no override. A refused start is logged at `Critical` with every reason.
 
-> **Phase 5 status:** the production containment handshake (the process-death supervisor, ADR-059) is not delivered yet
-> (docs/PHASE5_PLAN.md, step 7). Until it is, the production Worker refuses to start by design. Only the test-only host
-> (`tests/AutomataFlow.WorkerTestHost`) runs Workers, for verification.
+The handshake exists only on Linux, inside the Worker container below (ADR-075). Anywhere else, including any
+Windows host, the Worker refuses to start by design.
+
+## 3a. The Worker container and its process-death supervisor (ADR-075)
+- **One container is one Worker incarnation.** To scale, run more containers; never run more Workers in one container.
+  - Start: `docker compose --env-file deploy/.env -f deploy/docker-compose.yml --profile worker up -d --build worker`.
+  - Set `PLAYWRIGHT_VERSION` in `deploy/.env` to the pin in `Directory.Packages.props`.
+- **Posture (required; the launcher refuses anything else):**
+  - **no** `init: true` (tini cannot forward SIGTERM to the supervisor's uid without `CAP_KILL`): the supervisor is PID 1;
+  - the container starts as root, used by the launcher only;
+  - `cap_drop: ALL` and `cap_add: NET_ADMIN, SETUID, SETGID, SETPCAP, SYS_CHROOT`;
+  - the seccomp profile `deploy/verify/chromium-seccomp.json`.
+
+  Never `--privileged`, never `CAP_SYS_ADMIN`. An over-privileged container is refused, not tolerated. So is a container without a seccomp profile derived from Docker's default: the supervisor tests for one behaviourally at startup (`keyctl` must be denied). That probe cannot tell the approved profile from Docker's own default, but the default would break the Chromium sandbox anyway.
+- **What runs:**
+  - the supervisor (PID 1; uid 10002, `CAP_NET_ADMIN` only);
+  - the unit: its init, the Worker, the Playwright driver and Chromium. All run as uid 10001 with **no** capability, in their own user and PID namespaces.
+- **Data volumes** belong to uid 10001 and are owner-only (0700): `/var/lib/automataflow/keys`, shared with the Api, and `/var/lib/automataflow/artifacts`. The supervisor must never be able to read them.
+- **What the supervisor does:**
+  1. It kills the unit when:
+     - the Worker exits or dies;
+     - the incarnation's heartbeat is older than `Supervisor:HeartbeatStaleSeconds` (default 45), which means frozen or partitioned;
+     - the Worker never registers (`Supervisor:StartupTimeoutSeconds`);
+     - or the container is stopped.
+  2. It proves the unit gone.
+  3. It destroys the dead incarnation's lingering sockets by exact cookie.
+  4. It records `ProcessDeathConfirmed`.
+  5. It exits, and the restart policy starts a **new** incarnation, which continues every record from the journal.
+- **Exit codes:**
+
+  | Code | Meaning |
+  |---|---|
+  | 0 | fenced, or nothing to fence |
+  | 2 | startup refused (log level `Critical`; the Worker was refused too) |
+  | 3 | **no fence**: proof or drain failed. The log line `Process-death fence NotFenced <reason>` names the cause; ambiguous sockets are logged with tuple, state and inode |
+
+  After exit code 3, the affected records go `AwaitingFence`, then `NeedsReview`; handle them as in §4 and §5.
+- **Stopping:** `docker stop` sends SIGTERM. The Worker cancels its attempts, then the unit is proven gone and fenced.
+  - `stop_grace_period` must exceed `Supervisor:GracefulStopSeconds + FenceConfirmTimeoutSeconds + DrainPolls × DrainPollMilliseconds / 1000 + 60` seconds. With the defaults that is 45 + 60 + 60 + 60 = 225 s, and compose sets 4 min. Raise it whenever you raise any of these settings.
+  - A shorter grace period SIGKILLs everything without a fence (exit code 3 behaviour).
+- **Supervisor lost:** if the supervisor process (PID 1) dies, the container stops. No fence is recorded (P6), so recover through §5.
+- **`HostId` is not unique per host in containers** (`/etc/machine-id` comes from the image). Identify a Worker by its incarnation id and container, never by `HostId`.
 
 ## 4. Records the platform will not decide on
 | Record state | Meaning | What to do |
@@ -73,6 +112,8 @@ the Worker through the repeat-safety evaluator: `Cancelled` when no side effect 
 `NeedsReview`. Running attempts stop at the next heartbeat.
 
 ## 7. Known limitations (see docs/WORKFLOWS.md §9 and docs/PHASE5_PLAN.md)
-- No automatic process-death fencing until the supervisor (step 7) is delivered: dead or frozen Workers need §5.
-- Windows supervisor and identity paths are not verified (Smart App Control on the development host).
+- Automatic process-death fencing exists on Linux in the Worker container only (ADR-075). When it reports no fence, or when the supervisor itself is lost, use §5.
+- No Windows supervisor is delivered; a Windows Worker refuses to start. The Windows identity and owner-module table code has never been run (Smart App Control on the development host).
+- Below-socket queueing (P12) is not verified: the verification kernel cannot load `sch_netem`. The latency attestation (ADR-057) must cover local queueing.
+- The Worker holds the same database credentials as the supervisor. Fence confirmation is validated and audited, but it is not yet restricted to a separate database role (ADR-075).
 - Attestations (`targetEnforced`, `authoritative`, `businessKey`) are trusted, not proven.

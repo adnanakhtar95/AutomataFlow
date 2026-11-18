@@ -20,6 +20,43 @@ services:
       timeout: 5s
       retries: 10
 
+  # One container = one Worker incarnation under its process-death supervisor (ADR-075). Scale by running more
+  # containers, never more Workers per container. Started only with the "worker" profile:
+  #   docker compose --env-file deploy/.env -f deploy/docker-compose.yml --profile worker up -d --build worker
+  # The posture below is REQUIRED: the launcher refuses any other capability set or a missing seccomp filter.
+  worker:
+    profiles: ["worker"]
+    build:
+      context: ..
+      dockerfile: deploy/worker/Dockerfile
+      args:
+        PLAYWRIGHT_VERSION: ${PLAYWRIGHT_VERSION:?Set PLAYWRIGHT_VERSION (the Microsoft.Playwright pin in Directory.Packages.props)}
+    init: false                # NO tini: without CAP_KILL it cannot forward SIGTERM to the supervisor (uid 10002); the
+                               # launcher exec's into the supervisor, which is PID 1 and receives SIGTERM directly
+    user: root                 # the launcher only: it drops to uid 10002 (supervisor) and 10001 (Worker)
+    restart: unless-stopped    # after a fence the supervisor exits; a NEW container is a new incarnation
+    stop_grace_period: 4m      # > GracefulStopSeconds + FenceConfirmTimeoutSeconds + DrainPolls x interval + 60 s (225 s by default)
+    shm_size: 1g
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN, SETUID, SETGID, SETPCAP, SYS_CHROOT]
+    security_opt:
+      - seccomp=./verify/chromium-seccomp.json
+    environment:
+      ConnectionStrings__Default: Host=postgres;Port=5432;Database=${POSTGRES_DB:-automataflow};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      DataProtection__KeysDirectory: /var/lib/automataflow/keys
+      Artifacts__RootDirectory: /var/lib/automataflow/artifacts
+    volumes:
+      # Shared with the Api in a full deployment (the Api encrypts secrets, the Worker decrypts; the Api serves artifacts).
+      - automataflow_keys:/var/lib/automataflow/keys
+      - automataflow_artifacts:/var/lib/automataflow/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   automataflow_pgdata:
     name: automataflow_pgdata
+  automataflow_keys:
+    name: automataflow_keys
+  automataflow_artifacts:
+    name: automataflow_artifacts
