@@ -30,7 +30,8 @@ services:
       context: ..
       dockerfile: deploy/worker/Dockerfile
       args:
-        PLAYWRIGHT_VERSION: ${PLAYWRIGHT_VERSION:?Set PLAYWRIGHT_VERSION (the Microsoft.Playwright pin in Directory.Packages.props)}
+        # Optional at interpolation time so the postgres-only workflow works without it; the Dockerfile refuses an empty value.
+        PLAYWRIGHT_VERSION: ${PLAYWRIGHT_VERSION:-}
     init: false                # NO tini: without CAP_KILL it cannot forward SIGTERM to the supervisor (uid 10002); the
                                # launcher exec's into the supervisor, which is PID 1 and receives SIGTERM directly
     user: root                 # the launcher only: it drops to uid 10002 (supervisor) and 10001 (Worker)
