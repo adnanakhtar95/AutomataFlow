@@ -1,0 +1,10 @@
+# Optional TLS terminator (compose profile "tls"). Obtains and renews certificates automatically for AF_DOMAIN.
+{
+	email {$AF_ACME_EMAIL}
+}
+
+{$AF_DOMAIN} {
+	encode gzip
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	reverse_proxy web:8080
+}

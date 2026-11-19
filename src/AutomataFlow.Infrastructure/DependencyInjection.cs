@@ -41,6 +41,8 @@ public static class DependencyInjection
             dataProtection.PersistKeysToFileSystem(new DirectoryInfo(keys));
         }
 
+        KeyRingProtection.Configure(dataProtection, configuration);
+
         services.TryAddSingleton(TimeProvider.System);
         services.AddSingleton<ValueProtection>();
         services.AddScoped<OrganizationSecretProvider>();

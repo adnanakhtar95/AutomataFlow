@@ -116,6 +116,14 @@ try {
         docker run --rm -v "${root}:/src:ro" $node sh -c $web
         $exitCode = $LASTEXITCODE
     }
+
+    # Deployment configuration validation (Phase 7, ADR-078): the shipped production compose must pass and every known
+    # dangerous drift must be refused. Host-side (docker compose config only). Skipped for targeted -Filter runs.
+    if ($exitCode -eq 0 -and -not $Filter) {
+        Write-Host '--- deployment validation ---'
+        & (Join-Path $root 'scripts/test-deployment-validation.ps1')
+        $exitCode = $LASTEXITCODE
+    }
 }
 finally {
     if ($exitCode -ne 0) {

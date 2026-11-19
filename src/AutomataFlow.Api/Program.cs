@@ -44,7 +44,7 @@ var trustedNetworks = TrustedProxies.Parse(builder.Configuration["Proxy:TrustedN
 builder.Services.Configure<ForwardedHeadersOptions>(o =>
 {
     o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-    o.ForwardLimit = 1;
+    o.ForwardLimit = Math.Clamp(builder.Configuration.GetValue("Proxy:ForwardLimit", 1), 1, 3); // proxies in front of the Api (gateway = 1, TLS proxy + gateway = 2)
     o.KnownIPNetworks.Clear();
     o.KnownProxies.Clear();
     foreach (var network in trustedNetworks)
@@ -61,10 +61,8 @@ if (args is ["migrate", ..])
 {
     await using var scope = app.Services.CreateAsyncScope();
     var db = scope.ServiceProvider.GetRequiredService<AutomataFlowDbContext>();
-    var pending = (await db.Database.GetPendingMigrationsAsync()).ToList();
-    Log.Information("Applying {Count} pending migrations: {Migrations}", pending.Count, pending);
-    await db.Database.MigrateAsync();
-    Log.Information("Database schema is up to date");
+    var applied = await SchemaMigrator.MigrateAsync(db, app.Configuration["Database:ApplicationRole"], CancellationToken.None);
+    Log.Information("Applied {Count} pending migrations: {Migrations}; database schema is up to date", applied.Count, applied);
     return 0;
 }
 

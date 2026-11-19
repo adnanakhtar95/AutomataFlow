@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "name": "deployment-smoke",
+  "description": "Deployment smoke test: opens a page (use a site you operate, e.g. your target system's sign-in page), records the HTTP status and takes a screenshot. No side effects. The input is sensitive, so records are stored encrypted (exercises the key ring).",
+  "timeoutSeconds": 90,
+  "parameters": [ { "name": "siteUrl", "type": "url" } ],
+  "allowedHosts": [ "{{params.siteUrl}}" ],
+  "inputs": [ { "name": "reference", "type": "string", "required": true, "maxLength": 40, "sensitive": true } ],
+  "steps": [
+    { "id": "open", "type": "navigate", "config": { "url": "{{params.siteUrl}}/" } },
+    { "id": "page", "type": "screenshot", "config": { "label": "smoke" } },
+    { "id": "done", "type": "captureResult", "config": {
+        "fields": { "httpStatus": "{{steps.open.status}}" },
+        "outcome": { "status": "succeeded" } } }
+  ]
+}

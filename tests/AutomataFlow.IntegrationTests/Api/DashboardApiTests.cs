@@ -235,6 +235,16 @@ public sealed class WorkflowAuthoringApiTests(PlatformApi api) : IClassFixture<P
     }
 
     [Fact]
+    public async Task The_shipped_deployment_smoke_workflow_is_valid_and_has_no_attestations()
+    {
+        var (_, owner) = await api.RegisterAsync();
+        var definition = JsonNode.Parse(File.ReadAllText(Path.Combine(PlatformApi.RepositoryRoot, "docs", "workflows", "deployment-smoke.json")));
+        var result = JsonNode.Parse(await (await api.Client(owner.AccessToken).PostAsJsonAsync("/api/v1/workflows/validate", new { definition })).Content.ReadAsStringAsync())!;
+        Assert.True(result["valid"]!.GetValue<bool>(), result.ToJsonString());
+        Assert.Empty(result["attestations"]!.AsArray());
+    }
+
+    [Fact]
     public async Task Viewers_may_read_the_catalog_but_not_validate()
     {
         var (_, owner) = await api.RegisterAsync();

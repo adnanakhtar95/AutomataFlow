@@ -1,0 +1,180 @@
+# AutomataFlow production deployment (Phase 7; docs/DEPLOYMENT.md). Single host, Docker Compose.
+#   1. cp deploy/.env.prod.example deploy/.env.prod   and fill in every value (scripts/new-deployment-secrets.ps1 helps)
+#   2. scripts/validate-deployment.ps1                 refuses unsafe or incomplete configuration
+#   3. docker compose --env-file deploy/.env.prod -f deploy/docker-compose.prod.yml up -d
+# Images are built from this repository (build:) or pulled from your registry (AF_*_IMAGE). No DemoCrm, no test fixtures.
+# Networks: `edge` (gateway <-> Api, optional TLS proxy), `data` (internal: database), `egress` (Worker -> target sites).
+# Distinct from the development compose project (whose volumes are automataflow_*): volumes here are automataflow-prod_*.
+name: automataflow-prod
+
+x-app-db: &app-db Host=postgres;Port=5432;Database=automataflow;Username=automataflow_app;Password=${AF_DB_APP_PASSWORD:?set AF_DB_APP_PASSWORD}
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "20m", max-file: "5" }
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: ${AF_EDGE_SUBNET:-172.30.10.0/24}
+  data:
+    internal: true
+  egress: {}
+
+services:
+  postgres:
+    image: postgres:18.6@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${AF_DB_SUPERUSER_PASSWORD:?set AF_DB_SUPERUSER_PASSWORD}
+      POSTGRES_DB: postgres
+      AF_DB_OWNER_PASSWORD: ${AF_DB_OWNER_PASSWORD:?set AF_DB_OWNER_PASSWORD}
+      AF_DB_APP_PASSWORD: ${AF_DB_APP_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d automataflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    deploy:
+      resources:
+        limits: { cpus: "${AF_DB_CPUS:-2}", memory: "${AF_DB_MEMORY:-2g}" }
+    shm_size: 256m
+    logging: *logging
+
+  # One-shot schema migration with the OWNER role (the only role with DDL). Runs before the Api and Workers start.
+  migrate:
+    image: ${AF_API_IMAGE:-automataflow-api:latest}
+    build: { context: .., dockerfile: deploy/api/Dockerfile }
+    command: ["migrate"]
+    environment:
+      ConnectionStrings__Default: Host=postgres;Port=5432;Database=automataflow;Username=automataflow_owner;Password=${AF_DB_OWNER_PASSWORD}
+      Auth__Jwt__SigningKey: ${AF_JWT_SIGNING_KEY:?set AF_JWT_SIGNING_KEY}
+    networks: [data]
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+    read_only: true
+    tmpfs: [/tmp]
+    logging: *logging
+
+  api:
+    image: ${AF_API_IMAGE:-automataflow-api:latest}
+    build: { context: .., dockerfile: deploy/api/Dockerfile }
+    restart: unless-stopped
+    environment:
+      ConnectionStrings__Default: *app-db
+      Auth__Jwt__SigningKey: ${AF_JWT_SIGNING_KEY}
+      Auth__AllowRegistration: ${AF_ALLOW_REGISTRATION:-false}
+      Platform__Mode: ${AF_PLATFORM_MODE:-SelfHosted}
+      Proxy__TrustedNetworks: ${AF_EDGE_SUBNET:-172.30.10.0/24}
+      Proxy__ForwardLimit: ${AF_PROXY_HOPS:-1}
+      DataProtection__CertificatePath: /run/secrets/keyring_certificate
+      DataProtection__CertificatePassword: ${AF_KEYRING_CERTIFICATE_PASSWORD:?set AF_KEYRING_CERTIFICATE_PASSWORD}
+    secrets: [keyring_certificate]
+    volumes:
+      - keys:/var/lib/automataflow/keys
+      - artifacts:/var/lib/automataflow/artifacts
+    networks: [edge, data]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    deploy:
+      resources:
+        limits: { cpus: "${AF_API_CPUS:-2}", memory: "${AF_API_MEMORY:-1g}" }
+    logging: *logging
+
+  # One container = one Worker incarnation under its process-death supervisor (ADR-075). Scale with
+  # `--scale worker=N`, never more Workers per container. The posture below is REQUIRED (the launcher refuses
+  # anything else); scripts/validate-deployment.ps1 checks it before every deployment.
+  worker:
+    image: ${AF_WORKER_IMAGE:-automataflow-worker:latest}
+    build:
+      context: ..
+      dockerfile: deploy/worker/Dockerfile
+      args: { PLAYWRIGHT_VERSION: "${PLAYWRIGHT_VERSION:-}" }
+    init: false               # NEVER tini: the supervisor must be PID 1 to receive SIGTERM (ADR-075)
+    user: root                # the launcher only; it drops to uid 10002 (supervisor) and 10001 (Worker)
+    restart: unless-stopped   # after a fence the supervisor exits; a NEW container is a new incarnation
+    stop_grace_period: 4m
+    shm_size: 1g
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN, SETUID, SETGID, SETPCAP, SYS_CHROOT]
+    security_opt:
+      - seccomp=./verify/chromium-seccomp.json
+    environment:
+      ConnectionStrings__Default: *app-db
+      DataProtection__KeysDirectory: /var/lib/automataflow/keys
+      DataProtection__CertificatePath: /run/secrets/keyring_certificate
+      DataProtection__CertificatePassword: ${AF_KEYRING_CERTIFICATE_PASSWORD}
+      Artifacts__RootDirectory: /var/lib/automataflow/artifacts
+      Automation__Browser__Mode: ${AF_PLATFORM_MODE:-SelfHosted}
+      Worker__MaxConcurrentAttempts: ${AF_WORKER_CONCURRENCY:-2}
+    secrets: [keyring_certificate]
+    volumes:
+      - keys:/var/lib/automataflow/keys
+      - artifacts:/var/lib/automataflow/artifacts
+    networks: [data, egress]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    deploy:
+      resources:
+        limits: { cpus: "${AF_WORKER_CPUS:-2}", memory: "${AF_WORKER_MEMORY:-3g}" }
+    logging: *logging
+
+  web:
+    image: ${AF_WEB_IMAGE:-automataflow-web:latest}
+    build: { context: .., dockerfile: deploy/web/Dockerfile }
+    restart: unless-stopped
+    environment:
+      AF_API_UPSTREAM: http://api:8080
+    ports:
+      - "${AF_HTTP_BIND:-127.0.0.1}:${AF_HTTP_PORT:-8080}:8080"
+    networks: [edge]
+    depends_on:
+      api: { condition: service_healthy }
+    read_only: true
+    # Writable scratch for the unprivileged nginx (uid 101): the rendered config, cache and pid files.
+    tmpfs: ["/tmp:uid=101,gid=101,mode=0700", "/var/cache/nginx:uid=101,gid=101,mode=0700", "/etc/nginx/conf.d:uid=101,gid=101,mode=0755"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    deploy:
+      resources:
+        limits: { cpus: "1", memory: 256m }
+    logging: *logging
+
+  # Optional TLS terminator with automatic certificates (profile "tls"): publishes 80/443 for AF_DOMAIN.
+  # Set AF_PROXY_HOPS=2 when it is used (Caddy, then the gateway, both add X-Forwarded-For).
+  tls:
+    profiles: ["tls"]
+    image: caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    restart: unless-stopped
+    environment:
+      AF_DOMAIN: ${AF_DOMAIN:-}
+      AF_ACME_EMAIL: ${AF_ACME_EMAIL:-}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./tls/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [edge]
+    depends_on: [web]
+    logging: *logging
+
+secrets:
+  keyring_certificate:
+    file: ${AF_KEYRING_CERTIFICATE_FILE:-./secrets/keyring.pfx}
+
+volumes:
+  pgdata:
+  keys:
+  artifacts:
+  caddy_data:
+  caddy_config:

@@ -19,6 +19,11 @@ TestResults/
 .env
 .env.*
 !.env.example
+!.env.prod.example
+deploy/secrets/
+*.pfx
+*.p12
+*.key
 *.pfx
 *.key
 secrets.json
@@ -42,3 +47,6 @@ web/**/dist/
 playwright-report/
 test-results/
 *.trace.zip
+
+# Deployment backups (scripts/backup.ps1): contain customer data
+/backups/
