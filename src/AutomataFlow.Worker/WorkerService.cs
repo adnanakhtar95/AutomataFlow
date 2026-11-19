@@ -140,7 +140,7 @@ public sealed class WorkerService(
     IOptions<WorkerOptions> options,
     ILogger<WorkerService> logger) : BackgroundService
 {
-    private readonly ConcurrentDictionary<Guid, Running> _running = new();
+    private readonly RunningAttempts _running = new();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -180,25 +180,17 @@ public sealed class WorkerService(
                     foreach (var claim in claims)
                     {
                         await slots.WaitAsync(stoppingToken);
-                        var cts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-                        var task = Task.Run(async () =>
+                        _ = _running.Start(claim, async token =>
                         {
                             try
                             {
-                                await processor.ProcessAsync(claim, cts.Token);
+                                await processor.ProcessAsync(claim, token);
                             }
                             catch (Exception ex) when (ex is not OutOfMemoryException)
                             {
                                 logger.LogError("Record processing failed {JobRecordId} {ExceptionType}", claim.Id, ex.GetType().Name);
                             }
-                            finally
-                            {
-                                _running.TryRemove(claim.Id, out _);
-                                cts.Dispose();
-                                slots.Release();
-                            }
-                        }, CancellationToken.None);
-                        _running[claim.Id] = new Running(claim, cts, task);
+                        }, () => slots.Release(), stoppingToken);
                     }
                 }
 
@@ -209,12 +201,8 @@ public sealed class WorkerService(
         {
         }
 
-        foreach (var running in _running.Values)
-        {
-            await running.Cancellation.CancelAsync();
-        }
-
-        await Task.WhenAll(_running.Values.Select(r => r.Task).Append(heartbeat).Append(recovery));
+        await _running.CancelAllAsync();
+        await Task.WhenAll(_running.Tasks().Append(heartbeat).Append(recovery));
         logger.LogInformation("Worker stopped {IncarnationId}", incarnation.Id.Value);
     }
 
@@ -227,13 +215,16 @@ public sealed class WorkerService(
             {
                 await Task.Delay(TimeSpan.FromSeconds(o.HeartbeatSeconds), stoppingToken);
                 await journal.HeartbeatAsync(incarnation.Id, stoppingToken);
-                var snapshot = _running.Values.ToList();
-                var lost = await dispatcher.RenewAsync(incarnation.Id.Value, [.. snapshot.Select(r => r.Claim.Id)], TimeSpan.FromSeconds(o.ClaimLeaseSeconds), stoppingToken);
-                var cancelled = await dispatcher.CancelRequestedAsync([.. snapshot.Select(r => r.Claim.JobId).Distinct()], stoppingToken);
-                foreach (var running in snapshot.Where(r => lost.Contains(r.Claim.Id) || cancelled.Contains(r.Claim.JobId)))
+                var snapshot = _running.Snapshot();
+                var lost = await dispatcher.RenewAsync(incarnation.Id.Value, [.. snapshot.Select(c => c.Id)], TimeSpan.FromSeconds(o.ClaimLeaseSeconds), stoppingToken);
+                var cancelled = await dispatcher.CancelRequestedAsync([.. snapshot.Select(c => c.JobId).Distinct()], stoppingToken);
+                foreach (var claim in snapshot.Where(c => lost.Contains(c.Id) || cancelled.Contains(c.JobId)))
                 {
-                    logger.LogInformation("Stopping attempt {JobRecordId} {Reason}", running.Claim.Id, lost.Contains(running.Claim.Id) ? "ClaimLost" : "JobCancelled");
-                    await running.Cancellation.CancelAsync();
+                    // An attempt that finished after the snapshot released its claim itself: nothing to stop.
+                    if (await _running.CancelAsync(claim.Id))
+                    {
+                        logger.LogInformation("Stopping attempt {JobRecordId} {Reason}", claim.Id, lost.Contains(claim.Id) ? "ClaimLost" : "JobCancelled");
+                    }
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -275,5 +266,4 @@ public sealed class WorkerService(
         }
     }
 
-    private sealed record Running(ClaimedRecord Claim, CancellationTokenSource Cancellation, Task Task);
 }

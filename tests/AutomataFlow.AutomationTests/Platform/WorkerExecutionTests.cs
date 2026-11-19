@@ -105,9 +105,18 @@ public sealed class WorkerExecutionTests(BrowserFixture fixture)
 
         var records = await RecordsAsync(rig, job);
         var succeeded = records.Count(r => r.Status == JobRecordStatus.Succeeded);
-        Assert.InRange(succeeded, 1, 2); // the one done before the cancel, plus at most the one in flight
-        Assert.All(records.Where(r => r.Status != JobRecordStatus.Succeeded), r => Assert.Equal(JobRecordStatus.Cancelled, r.Status));
-        Assert.Equal(posts + succeeded, await fixture.DemoCrm.RegistrationSubmissionsAsync());
+
+        // The record in flight when the cancellation arrived either finished, or was interrupted. Interrupted AFTER its
+        // side effect started, it must become NeedsReview, never Cancelled (ADR-072: a cancelled job never hides an
+        // ambiguity). Which one happens depends on where the attempt was when the heartbeat delivered the cancellation.
+        var interrupted = records.Where(r => r.Status == JobRecordStatus.NeedsReview).ToList();
+        Assert.True(interrupted.Count <= 1, "at most the one in-flight record (MaxConcurrency 1) can be interrupted");
+        Assert.All(interrupted, r => Assert.Equal("CancelledWithOpenAmbiguity", r.ErrorCode));
+        Assert.InRange(succeeded + interrupted.Count, 1, 2); // the one done before the cancel, plus at most the one in flight
+        Assert.All(records.Where(r => r.Status is not (JobRecordStatus.Succeeded or JobRecordStatus.NeedsReview)), r => Assert.Equal(JobRecordStatus.Cancelled, r.Status));
+
+        // No record that was never started reached the target, and none was submitted twice.
+        Assert.InRange(await fixture.DemoCrm.RegistrationSubmissionsAsync() - posts, succeeded, succeeded + interrupted.Count);
     }
 
     [Fact]

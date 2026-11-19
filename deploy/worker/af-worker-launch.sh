@@ -52,11 +52,13 @@ export Automation__EgressProxy__LedgerDirectory="$LEDGER_DIR"
 export AF_WORKER_HOME="$WORKER_HOME"
 
 # The unit wrapper: unshare(CLONE_NEWUSER) with euid = the supervisor's uid, so the supervisor OWNS the unit's user namespace
-# (it may signal and inspect unit tasks, nothing else). It waits for its uid map, then creates the PID namespace; the
-# namespace init drops to inner uid 1000 with every capability set (bounding included) empty and no_new_privs.
+# (it may signal and inspect unit tasks, nothing else). It waits for BOTH its uid and gid maps (the launcher writes uid_map
+# first: proceeding on uid_map alone let setpriv's setresgid(1000) race the gid_map write and fail with EINVAL), then
+# creates the PID namespace; the namespace init drops to inner uid 1000 with every capability set (bounding included)
+# empty and no_new_privs.
 # shellcheck disable=SC2086
 setpriv --reuid="$SUP_UID" --regid="$SUP_UID" --clear-groups --inh-caps=-all -- unshare --user --keep-caps -- \
-    sh -c 'while [ -z "$(cat /proc/self/uid_map)" ]; do sleep 0.02; done
+    sh -c 'while [ -z "$(cat /proc/self/uid_map)" ] || [ -z "$(cat /proc/self/gid_map)" ]; do sleep 0.02; done
            exec unshare --pid --fork --kill-child=SIGKILL \
              setpriv --reuid=1000 --regid=1000 --clear-groups --inh-caps=-all --ambient-caps=-all --bounding-set=-all --no-new-privs \
              -- /bin/bash "$@"' sh "$UNIT_INIT" $AF_WORKER_COMMAND &
