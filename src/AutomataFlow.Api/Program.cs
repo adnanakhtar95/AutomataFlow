@@ -1,8 +1,17 @@
 using AutomataFlow.Api.Auth;
 using AutomataFlow.Api.Health;
 using AutomataFlow.Infrastructure;
+using AutomataFlow.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.EntityFrameworkCore;
 using Serilog;
+
+// Container health probe (the release image has no shell or curl): exit 0 when the local readiness endpoint answers 200.
+if (args is ["healthcheck", ..])
+{
+    return await HealthProbe.RunAsync(args.Length > 1 ? args[1] : "http://127.0.0.1:8080/health/ready");
+}
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -20,12 +29,49 @@ builder.Services.AddControllers()
     .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
 builder.Services.AddProblemDetails();
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(o =>
+{
+    o.SupportNonNullableReferenceTypes();
+    o.SchemaFilter<AutomataFlow.Api.OpenApi.RequiredPropertiesSchemaFilter>();
+});
 
 builder.Services.AddHealthChecks()
     .AddCheck<DatabaseHealthCheck>("database", tags: ["ready"]);
 
+// Behind the gateway (deploy/web), the client address comes from X-Forwarded-For, but ONLY from proxies in
+// Proxy:TrustedNetworks (CIDR list). Without it the auth rate limit would see every client as the gateway's address.
+var trustedNetworks = TrustedProxies.Parse(builder.Configuration["Proxy:TrustedNetworks"]);
+builder.Services.Configure<ForwardedHeadersOptions>(o =>
+{
+    o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    o.ForwardLimit = 1;
+    o.KnownIPNetworks.Clear();
+    o.KnownProxies.Clear();
+    foreach (var network in trustedNetworks)
+    {
+        o.KnownIPNetworks.Add(network);
+    }
+});
+
 var app = builder.Build();
+
+// Explicit schema migration (docs/DEPLOYMENT.md): run once per release BEFORE starting the new Api and Workers.
+// The Api never migrates on its own start, so an upgrade is always a deliberate, observable step.
+if (args is ["migrate", ..])
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    var db = scope.ServiceProvider.GetRequiredService<AutomataFlowDbContext>();
+    var pending = (await db.Database.GetPendingMigrationsAsync()).ToList();
+    Log.Information("Applying {Count} pending migrations: {Migrations}", pending.Count, pending);
+    await db.Database.MigrateAsync();
+    Log.Information("Database schema is up to date");
+    return 0;
+}
+
+if (trustedNetworks.Count > 0)
+{
+    app.UseForwardedHeaders();
+}
 
 app.UseExceptionHandler();
 app.UseStatusCodePages();
@@ -49,7 +95,8 @@ app.MapHealthChecks("/health", new HealthCheckOptions { Predicate = _ => false }
 // Readiness: dependencies (PostgreSQL) are reachable.
 app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") });
 
-app.Run();
+await app.RunAsync();
+return 0;
 
 /// <summary>Exposed so integration tests can use WebApplicationFactory.</summary>
 public partial class Program;

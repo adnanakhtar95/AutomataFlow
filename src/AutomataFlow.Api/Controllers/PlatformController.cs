@@ -13,6 +13,8 @@ namespace AutomataFlow.Api.Controllers;
 /// <param name="AttestedPersonally">The operator confirms they checked the evidence personally.</param>
 public sealed record ConfirmFenceRequest(FenceMethod Method, [Required, MaxLength(1_000)] string EvidenceReference, bool AttestedPersonally, string? CurrentBootId, DrainReport? Drain);
 
+public sealed record FenceConfirmationResponse(bool Accepted, DateTimeOffset? FencedAt, int FencedAttempts);
+
 /// <summary>
 /// Platform operations (§7.5.6): Worker incarnations and audited human fence confirmation. Platform operators only;
 /// tenants can never confirm fences. Every call is audited by the journal, accepted or rejected.
@@ -26,6 +28,9 @@ public sealed class PlatformController(FenceAdministration fences, ICurrentUser 
     public Task<IReadOnlyList<IncarnationView>> Incarnations(CancellationToken cancellationToken) => fences.ListAsync(cancellationToken);
 
     [HttpPost("incarnations/{incarnationId:guid}/fence")]
+    [ProducesResponseType<FenceConfirmationResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
     public async Task<IActionResult> Confirm(Guid incarnationId, ConfirmFenceRequest request, CancellationToken cancellationToken)
     {
         var result = await fences.ConfirmHumanAsync(
@@ -37,7 +42,7 @@ public sealed class PlatformController(FenceAdministration fences, ICurrentUser 
         }
 
         return result.Accepted
-            ? Ok(new { result.Accepted, result.FencedAt, FencedAttempts = result.FencedAttempts.Length })
+            ? Ok(new FenceConfirmationResponse(result.Accepted, result.FencedAt, result.FencedAttempts.Length))
             : Problem(statusCode: StatusCodes.Status422UnprocessableEntity, title: "The fence evidence was rejected.", detail: result.RejectionReason);
     }
 }

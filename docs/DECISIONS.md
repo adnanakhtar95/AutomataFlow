@@ -841,6 +841,43 @@ Format: ID, status (Accepted / Proposed / Superseded), context, decision, conseq
     - One difference: that container uses `--init`, because the agent, not the supervisor, is its long-lived process; the supervisor under test is therefore not PID 1.
     - The supervisor-as-PID-1 path is verified on the built production image: graceful `docker stop` gives exit 0, `Worker stopped` and an accepted fence row.
   - P12 is unavailable: `sch_netem` cannot be loaded and the image has no `tc`.
+## ADR-076 — Dashboard stack and the OpenAPI contract (Phase 6 step 1)
+**Status:** Accepted (2026-11-20). Resolves the libraries deferred by ADR-019.
+- **Libraries (all pinned exactly in `web/automataflow-web/package.json`, lockfile committed):** React 19, react-router 8, TanStack Query 5, openapi-fetch, Tailwind CSS 4 (Vite plugin); dev: Vite 8, TypeScript 5.9, Vitest, Testing Library, ESLint, openapi-typescript, `@playwright/test` (same Playwright version as the .NET pin). Licence audit of the full lockfile (269 packages): MIT, Apache-2.0, ISC, BSD-2/3, 0BSD, BlueOak-1.0.0, MPL-2.0 (lightningcss, used unmodified), CC-BY-4.0 (caniuse-lite data), Python-2.0 (argparse). No paid or restrictive licence.
+- **Monaco is not used.** The JSON editor is a plain text area with server-side validation (`POST /api/v1/workflows/validate`). Monaco would add several megabytes and a worker setup for little gain over the guided form editor, which is the primary authoring path.
+- **Contract:** the typed client is generated from a committed snapshot of the Api's OpenAPI document (`web/automataflow-web/openapi/automataflow-api.json`). `OpenApiContractTests` fails when the Api's contract drifts from the snapshot; `scripts/update-openapi.ps1` regenerates the snapshot and `src/api/schema.d.ts` inside the pinned containers. `npm run check:api` fails when `schema.d.ts` is stale against the snapshot.
+- **Same origin only:** the Api has no CORS. In development Vite proxies `/api`; in deployments a reverse proxy does the same (Phase 7).
+- **Rendering rules (lint-enforced):** API text is rendered as text, never as HTML (`dangerouslySetInnerHTML` forbidden); no web storage (`localStorage`/`sessionStorage` forbidden). Artifacts and exports are fetched with the bearer header and handed to the user as object URLs; a token never appears in a URL.
+- **Toolchain:** Node 24 in the pinned image `.node-image`. The verification script runs lint, type check, unit tests, build and the API-type check in that image; the host may also run them (Smart App Control did not block the native Vite/Tailwind modules on 2026-11-20).
+
+## ADR-077 — Browser sessions: HttpOnly refresh cookie and dashboard read endpoints (Phase 6 step 2)
+**Status:** Accepted (2026-11-20). Amends ADR-068 ("no cookie endpoints") for browser clients only and supersedes the memory-only refresh token first planned for the dashboard.
+- **Why:** session restoration after a reload is a Phase 6 requirement, and refresh tokens must never be in web storage or readable by page script. Keeping the refresh token in JavaScript memory makes every reload a sign-out; keeping it in web storage exposes a 14-day credential to any injected script.
+- **Transport:** a request with `X-AutomataFlow-Session: browser` on `login`, `register`, `refresh` or `logout` uses the browser transport:
+  - the refresh token is set only as the cookie `__Secure-af_refresh` (`HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/api/v1/auth`, expiry = token expiry) and the body's `refreshToken` is `null`;
+  - `refresh` and `logout` read the token from the cookie **only when the header is present**. A cross-site form or image request cannot add a custom header, and the Api has no CORS, so a cross-origin script cannot either. `SameSite=Strict` is a second, independent guard;
+  - a refused refresh (invalid, reused, revoked, membership gone) and `logout` delete the cookie;
+  - token responses carry `Cache-Control: no-store`.
+
+  API clients without the header keep the body transport unchanged; rotation, reuse detection and family revocation (ADR-068) apply to both.
+- **Access token:** stays in JavaScript memory only (15 minutes), sent only in the `Authorization` header.
+- **Tabs:** the cookie is shared between tabs, so refreshes are serialized across tabs with a Web Lock (`navigator.locks`); the second tab then presents the already-rotated cookie instead of tripping reuse detection. A sign-out is broadcast to the other tabs (`BroadcastChannel`).
+- **Dashboard reads (all organization-scoped through `ICurrentUser`, cross-tenant tested on hosts with and without the query-filter backstop):**
+  - `GET /api/v1/me` returns e-mail, active workspace name and slug, role, platform-operator flag and the caller's own memberships (the reviewed membership read of ADR-068, constrained to the user id);
+  - `GET /api/v1/overview`: job and record counts by status, workflow totals, five recent jobs and workflows, all counted in the database;
+  - `GET /api/v1/workflows?search=` (case-insensitive, LIKE wildcards escaped) and each summary's newest published version;
+  - `GET /api/v1/jobs?status=`; job views add workflow name, version number and invalid-record count, and record counts are read in one grouped query instead of one query per job;
+  - `GET /api/v1/workflow-catalog`: the 13 implemented actions (sections, outputs, side-effect and continue flags, default timeouts) and the closed value sets, from Application metadata (the Api still never references Automation);
+  - `POST /api/v1/workflows/validate` (Operator+): the draft validation rules without storing anything, plus the attestations publication will require.
+- **OpenAPI:** non-nullable properties are marked `required` (`RequiredPropertiesSchemaFilter`, nullable reference types honoured), so generated TypeScript types are exact. The platform fence response is now a typed record.
+
+## Phases 6–10 authorization
+**Status:** Authorized by the user on 2026-11-20 ("Master project completion directive").
+- Phases 6, 7, 8, 9 and 10 are executed consecutively without asking for approval between phases. This supersedes, for these phases only, the working agreement to stop and wait for approval at the end of each phase (CLAUDE.md). Commits and pushes are made per verified step.
+- A phase starts only when the previous one meets its acceptance criteria or documents its remaining limitations explicitly.
+- **Stop conditions remain:** a security guarantee that cannot be preserved; an architecture decision that materially changes the approved design; a destructive data migration; a real customer secret, credential or production resource; a paid service; a legal or regulatory business decision; an irreversible production operation; a risk of destroying user work.
+- `docs/ROADMAP.md` stays the single roadmap; the per-phase plans are `docs/PHASE6_PLAN.md` to `docs/PHASE10_PLAN.md`.
+
 ## Resolved from the approval round (2026-11-11)
 1. SDK: selected from inspection, not blindly pinned (ADR-004). 2. PostgreSQL: Docker `postgres:18`, port 5433, volume (ADR-013). 3. Git initialized; commit after each verified phase; no secrets or generated artifacts. 4. Identity + JWT (ADR-010). 5. Hand-written validators (ADR-016). 6. Razor Pages Demo CRM (ADR-011). 7. Folder layout `src/ tests/ web/ deploy/ docs/`, React in `web/automataflow-web`. 8. 16-day target, 16–20 realistic; quality over deadline. 9. Frontend libraries deferred (ADR-019). 10. Playwright Chromium download approved for Phase 3.
 

@@ -66,6 +66,7 @@ public static class DependencyInjection
         services.AddScoped<WorkflowService>();
         services.AddScoped<Jobs.JobService>();
         services.AddScoped<Jobs.ExecutionQueryService>();
+        services.AddScoped<Jobs.OverviewService>();
         return services;
     }
 

@@ -8,11 +8,14 @@ Status: Draft v0.2. Estimates are indicative planning aids, not deadlines; quali
 | 2 | Demo CRM | 2 | done |
 | 3 | Playwright browser engine (incl. egress proxy, SSRF test matrix) | 6.5 | done (approved 2026-11-12) |
 | 4 | Workflow engine and action registry (incl. repeat safety, attempt journal port, DemoCrm fixture extensions) | 11.0 | done (2026-11-15) |
-| 5 | Background workers and job orchestration (execution platform) | 3 (indicative; far larger in practice) | authorized 2026-11-15; in progress (docs/PHASE5_PLAN.md) |
-| 6 | React dashboard | 3 | |
-| 7 | Testing, security, Docker, hosted isolation, documentation | 2+ | |
+| 5 | Background workers and job orchestration (execution platform) | 3 (indicative; far larger in practice) | done (2026-11-19, `d247a51`) |
+| 6 | Customer management dashboard (docs/PHASE6_PLAN.md) | 3+ | done (2026-11-20) |
+| 7 | Production infrastructure and security (docs/PHASE7_PLAN.md) | 3+ | authorized 2026-11-20; in progress |
+| 8 | Customer onboarding and workspace management (docs/PHASE8_PLAN.md) | 3+ | authorized 2026-11-20 |
+| 9 | Commercial automation capabilities (docs/PHASE9_PLAN.md) | 3+ | authorized 2026-11-20 |
+| 10 | Commercial readiness and release (docs/PHASE10_PLAN.md) | 2+ | authorized 2026-11-20 |
 
-Phase 7 is deliberately small because testing, security checks and docs are done **continuously** in every phase; Phase 7 is hardening and packaging. Risk: Phase 6 breadth; the first cut covers Jobs, Execution details and Workflow JSON editor, then the remaining screens.
+On 2026-11-20 the user authorized Phases 6–10 to be executed consecutively without a pause between phases (docs/DECISIONS.md, "Phases 6–10 authorization"). Each phase still needs its acceptance criteria met, or its remaining limitations explicitly documented, before the next one starts. The former Phase 7 ("Testing, security, Docker, hosted isolation, documentation") is split across Phases 7 and 10; its hosted-isolation items (ADR-031, ADR-056) are carried into Phase 7 and are not dropped silently.
 
 ## Phase 1 — Solution foundation and environment setup
 Checklist (approved scope; nothing beyond it):
@@ -123,14 +126,26 @@ Detailed step plan: `docs/PHASE5_PLAN.md` (authorized 2026-11-15).
 - Usage records written.
 **Exit:** CSV demo end to end through API + Worker; worker-kill recovery test; cancellation test; retry of injected temporary errors; cross-tenant test.
 
-## Phase 6 — React dashboard
-- Scaffold Vite + TS + Tailwind; OpenAPI-generated client; auth flow.
-- Cut 1: Overview, Jobs (create/upload, list, detail with records), Execution details (logs, screenshots, artifacts), Workflows (form + JSON editor with schema validation).
-- Cut 2: Execution history, Data uploads, Monitoring, Integrations (stub), Settings.
+## Phase 6 — Customer management dashboard
+Detailed step plan and status: `docs/PHASE6_PLAN.md`.
+- Scaffold Vite + TS + Tailwind; OpenAPI-generated client; auth flow with session restoration.
+- Overview, Workflows (list, search, versions, guided form + JSON editor, validation, publication), Jobs (upload, list, detail with records, cancel, requeue, export), Execution details (attempts, logs, screenshots, artifacts), workspace secrets.
 - Live status via polling.
-**Exit:** Operator can upload the demo CSV, watch the job progress, inspect failures, download results.
+**Exit:** an operator signs in, publishes a workflow, uploads the demo CSV, watches the job progress, inspects failures and artifacts and downloads results, verified end to end against the real Api and Worker.
 
-## Phase 7 — Testing, security, Docker, documentation
+## Phase 7 — Production infrastructure and security
+Detailed plan: `docs/PHASE7_PLAN.md`. Release images (Api, Worker, web), production compose, deployment procedures, security hardening of the Phase 5 limitations, configuration validation.
+
+## Phase 8 — Customer onboarding and workspace management
+Detailed plan: `docs/PHASE8_PLAN.md`. Workspace lifecycle, membership and invitations, roles, onboarding without database access.
+
+## Phase 9 — Commercial automation capabilities
+Detailed plan: `docs/PHASE9_PLAN.md`. Business-driven engine additions and three reusable workflow packages.
+
+## Phase 10 — Commercial readiness and release
+Detailed plan: `docs/PHASE10_PLAN.md`. Operations, reliability and performance measurements, customer documentation, release report.
+
+## Former Phase 7 scope (carried into Phases 7 and 10)
 - Coverage gaps, security review against ARCHITECTURE §9, dependency vulnerability scan, license audit.
 - Dockerfiles and full Compose stack (postgres, api, worker, demo-crm, web); non-root, resource limits.
 - Operations guide, workflow authoring guide, README, updated ADRs.

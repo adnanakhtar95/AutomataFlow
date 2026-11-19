@@ -13,17 +13,24 @@ public sealed class ExecutionController(ExecutionQueryService executions) : Cont
 {
     [HttpPost("jobs/{jobId:guid}/cancel")]
     [Authorize(Policy = Policies.Operator)]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Cancel(Guid jobId, CancellationToken cancellationToken) =>
         this.ToHttp(await executions.CancelAsync(jobId, cancellationToken), _ => Accepted());
 
     /// <summary>Explicit requeue of a NeedsReview record (never automatic after a fence, §7.5.7).</summary>
     [HttpPost("jobs/{jobId:guid}/records/{recordId:guid}/requeue")]
     [Authorize(Policy = Policies.Admin)]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Requeue(Guid jobId, Guid recordId, CancellationToken cancellationToken) =>
         this.ToHttp(await executions.RequeueAsync(jobId, recordId, cancellationToken), _ => Accepted());
 
     /// <summary>Results as CSV (row, operation id, status, error code, result fields). Never contains record inputs.</summary>
     [HttpGet("jobs/{jobId:guid}/results.csv")]
+    [ProducesResponseType<string>(StatusCodes.Status200OK, "text/csv")]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task Results(Guid jobId, CancellationToken cancellationToken)
     {
         var buffer = new StringWriter();
@@ -39,15 +46,21 @@ public sealed class ExecutionController(ExecutionQueryService executions) : Cont
     }
 
     [HttpGet("jobs/{jobId:guid}/records/{recordId:guid}/attempts")]
+    [ProducesResponseType<IReadOnlyList<AttemptView>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Attempts(Guid jobId, Guid recordId, CancellationToken cancellationToken) =>
         this.ToHttp(await executions.AttemptsAsync(jobId, recordId, cancellationToken), Ok);
 
     [HttpGet("attempts/{attemptId:guid}/logs")]
+    [ProducesResponseType<IReadOnlyList<LogView>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Logs(Guid attemptId, CancellationToken cancellationToken) =>
         this.ToHttp(await executions.LogsAsync(attemptId, cancellationToken), Ok);
 
     /// <summary>Artifact content: only through this authorized endpoint, never as static files (ADR-032).</summary>
     [HttpGet("artifacts/{artifactId:guid}")]
+    [ProducesResponseType<FileStreamResult>(StatusCodes.Status200OK, "application/octet-stream")]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Artifact(Guid artifactId, CancellationToken cancellationToken)
     {
         if (await executions.OpenArtifactAsync(artifactId, cancellationToken) is not { } found)

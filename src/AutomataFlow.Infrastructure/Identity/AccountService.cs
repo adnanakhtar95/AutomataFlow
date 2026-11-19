@@ -33,6 +33,13 @@ public enum AccountStatus
 /// <summary>An authenticated session: who, which organization, which role, and the plaintext refresh token (returned once).</summary>
 public sealed record AccountSession(Guid UserId, Guid OrganizationId, OrganizationRole Role, string RefreshToken, DateTimeOffset RefreshExpiresAt);
 
+/// <summary>One workspace the user belongs to.</summary>
+public sealed record MembershipView(Guid OrganizationId, string OrganizationName, string OrganizationSlug, OrganizationRole Role);
+
+/// <summary>The signed-in user as the dashboard shows them: identity, active workspace and every membership.</summary>
+public sealed record UserProfile(Guid UserId, string Email, Guid OrganizationId, string OrganizationName, string OrganizationSlug, OrganizationRole Role,
+    bool IsPlatformOperator, IReadOnlyList<MembershipView> Memberships);
+
 public sealed record AccountResult(AccountStatus Status, AccountSession? Session = null, IReadOnlyList<string>? Errors = null)
 {
     public static AccountResult Fail(AccountStatus status, params string[] errors) => new(status, null, errors);
@@ -196,6 +203,34 @@ public sealed class AccountService(
     /// <summary>The caller's role in <paramref name="organizationId"/>, or null when not (or no longer) a member.</summary>
     public async Task<OrganizationRole?> FindRoleAsync(Guid userId, Guid organizationId, CancellationToken cancellationToken) =>
         (await MembershipsAsync(userId, cancellationToken)).FirstOrDefault(m => m.OrganizationId == organizationId)?.Role;
+
+    /// <summary>
+    /// The caller's profile in the active organization, or null when the membership no longer exists. Lists only the
+    /// caller's own memberships (the reviewed cross-organization read below, constrained to the user id).
+    /// </summary>
+    public async Task<UserProfile?> ProfileAsync(Guid userId, Guid organizationId, CancellationToken cancellationToken)
+    {
+        var user = await users.FindByIdAsync(userId.ToString());
+        if (user is null)
+        {
+            return null;
+        }
+
+        var memberships = await MembershipsAsync(userId, cancellationToken);
+        var ids = memberships.Select(m => m.OrganizationId).ToList();
+        var organizations = await db.Organizations.AsNoTracking().Where(o => ids.Contains(o.Id)).ToDictionaryAsync(o => o.Id, cancellationToken);
+        var views = memberships.Where(m => organizations.ContainsKey(m.OrganizationId))
+            .Select(m => new MembershipView(m.OrganizationId, organizations[m.OrganizationId].Name, organizations[m.OrganizationId].Slug, m.Role))
+            .ToList();
+        var active = views.FirstOrDefault(v => v.OrganizationId == organizationId);
+        if (active is null)
+        {
+            return null;
+        }
+
+        return new UserProfile(userId, user.Email ?? string.Empty, active.OrganizationId, active.OrganizationName, active.OrganizationSlug, active.Role,
+            await users.IsInRoleAsync(user, PlatformOperatorRole), views);
+    }
 
     public async Task<bool> IsPlatformOperatorAsync(Guid userId)
     {

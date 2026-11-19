@@ -1,0 +1,9 @@
+# Build context for deploy/api/Dockerfile (the repository root): sources only.
+**/bin
+**/obj
+.git
+.vs
+**/node_modules
+web
+deploy/.env
+**/*.user

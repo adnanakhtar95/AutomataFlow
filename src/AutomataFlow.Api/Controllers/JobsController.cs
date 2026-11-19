@@ -43,6 +43,12 @@ public sealed class JobsController(JobService jobs, IOptions<ImportOptions> impo
     /// <summary>Creates a job from an uploaded CSV/JSON record file. Send an <c>Idempotency-Key</c> header to make retries safe.</summary>
     [HttpPost]
     [Authorize(Policy = Policies.Operator)]
+    [ProducesResponseType<JobCreated>(StatusCodes.Status201Created)]
+    [ProducesResponseType<JobCreated>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status413PayloadTooLarge)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status415UnsupportedMediaType)]
     [RequestSizeLimit(110L * 1024 * 1024)]
     [RequestFormLimits(MultipartBodyLengthLimit = 110L * 1024 * 1024)]
     public async Task<IActionResult> Create([FromForm] CreateJobForm form, [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey, CancellationToken cancellationToken)
@@ -83,14 +89,19 @@ public sealed class JobsController(JobService jobs, IOptions<ImportOptions> impo
         return this.ToHttp(result, created => created.Replayed ? Ok(created) : Created($"/api/v1/jobs/{created.JobId}", created));
     }
 
+    /// <param name="status">Optional: only jobs in this status.</param>
     [HttpGet]
-    public async Task<IReadOnlyList<JobView>> List([FromQuery] int skip = 0, [FromQuery] int take = 50, CancellationToken cancellationToken = default) =>
-        await jobs.ListAsync(skip, take, cancellationToken);
+    public async Task<IReadOnlyList<JobView>> List([FromQuery] JobStatus? status = null, [FromQuery] int skip = 0, [FromQuery] int take = 50, CancellationToken cancellationToken = default) =>
+        await jobs.ListAsync(status, skip, take, cancellationToken);
 
     [HttpGet("{jobId:guid}")]
+    [ProducesResponseType<JobView>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Get(Guid jobId, CancellationToken cancellationToken) => this.ToHttp(await jobs.GetAsync(jobId, cancellationToken), Ok);
 
     [HttpGet("{jobId:guid}/records")]
+    [ProducesResponseType<IReadOnlyList<RecordView>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Records(Guid jobId, [FromQuery] JobRecordStatus? status, [FromQuery] int skip = 0, [FromQuery] int take = 100, CancellationToken cancellationToken = default) =>
         this.ToHttp(await jobs.RecordsAsync(jobId, status, skip, take, cancellationToken), Ok);
 }

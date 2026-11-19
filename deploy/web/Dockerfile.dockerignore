@@ -1,0 +1,8 @@
+# Build context for deploy/web/Dockerfile (the repository root): the dashboard sources and its nginx template only.
+*
+!web/automataflow-web/**
+!deploy/web/nginx.conf.template
+web/automataflow-web/node_modules
+web/automataflow-web/dist
+web/automataflow-web/test-results
+web/automataflow-web/playwright-report

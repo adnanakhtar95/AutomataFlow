@@ -22,7 +22,10 @@ param(
 
     # Optional `dotnet test --filter` expression for targeted runs during development. Phase verification always
     # runs WITHOUT a filter (the complete suite).
-    [string]$Filter
+    [string]$Filter,
+
+    # Skip the dashboard checks (lint, type check, unit tests, build, API-type check) for a backend-only targeted run.
+    [switch]$SkipWeb
 )
 
 $ErrorActionPreference = 'Stop'
@@ -71,7 +74,7 @@ $seccomp = Join-Path $root 'deploy/verify/chromium-seccomp.json'
 $script = @'
 set -e
 cd /src
-tar cf - --exclude=./.git --exclude=./.vs --exclude=bin --exclude=obj . | tar xf - -C /work/src
+tar cf - --exclude=./.git --exclude=./.vs --exclude=bin --exclude=obj --exclude=node_modules --exclude=./web/automataflow-web/dist . | tar xf - -C /work/src
 cd /work/src
 dotnet build AutomataFlow.slnx
 touch /work/.built
@@ -103,6 +106,16 @@ try {
         -e "AUTOMATAFLOW_SHARED_DIRECTORY=/work/shared" `
         $image bash -c $script
     $exitCode = $LASTEXITCODE
+
+    # Dashboard (ADR-076): lint, type check, unit/component tests, production build and the API-type check, in the pinned
+    # Node image. The source is copied; node_modules is installed from the committed lockfile inside the container.
+    if ($exitCode -eq 0 -and -not $SkipWeb) {
+        $node = (Get-Content (Join-Path $root 'web/automataflow-web/.node-image') -Raw).Trim()
+        $web = 'set -e; mkdir -p /tmp/web && cd /src/web/automataflow-web && tar cf - --exclude=node_modules --exclude=dist . | tar xf - -C /tmp/web && cd /tmp/web && npm ci --no-audit --no-fund --loglevel=error && npm run lint && npm run typecheck && npm test && npm run build && npm run check:api'
+        Write-Host '--- dashboard checks ---'
+        docker run --rm -v "${root}:/src:ro" $node sh -c $web
+        $exitCode = $LASTEXITCODE
+    }
 }
 finally {
     if ($exitCode -ne 0) {

@@ -45,7 +45,8 @@ public sealed record CreateJobCommand(Guid WorkflowVersionId, IReadOnlyDictionar
 public sealed record JobCreated(Guid JobId, int TotalRecords, int InvalidRecords, bool Replayed);
 
 public sealed record JobView(Guid Id, Guid WorkflowId, Guid WorkflowVersionId, JobStatus Status, JobOptions Options, bool CancelRequested, string? SourceName,
-    int TotalRecords, DateTimeOffset CreatedAt, DateTimeOffset? StartedAt, DateTimeOffset? FinishedAt, IReadOnlyDictionary<string, int> RecordsByStatus);
+    int TotalRecords, DateTimeOffset CreatedAt, DateTimeOffset? StartedAt, DateTimeOffset? FinishedAt, IReadOnlyDictionary<string, int> RecordsByStatus,
+    string WorkflowName, int WorkflowVersionNumber, int InvalidRecords);
 
 /// <summary>A record as shown to operators: status, ids, result and error codes. Input values are never returned.</summary>
 public sealed record RecordView(Guid Id, int RowNumber, Guid OperationId, JobRecordStatus Status, int AttemptCount, string? ErrorCode, string? ErrorMessage, JsonElement? Result, JsonElement? ValidationErrors, DateTimeOffset? CompletedAt);
@@ -182,25 +183,25 @@ public sealed class JobService(AutomataFlowDbContext db, ICurrentUser user, Valu
         return ServiceResult<JobCreated>.Ok(new JobCreated(job.Id, total, invalid, false));
     }
 
-    public async Task<IReadOnlyList<JobView>> ListAsync(int skip, int take, CancellationToken cancellationToken)
+    /// <summary>Newest first; optionally only jobs in <paramref name="status"/>. Record counts are read in one grouped query.</summary>
+    public async Task<IReadOnlyList<JobView>> ListAsync(JobStatus? status, int skip, int take, CancellationToken cancellationToken)
     {
         var org = user.OrganizationId;
-        var jobs = await db.Jobs.AsNoTracking().Where(j => j.OrganizationId == org).OrderByDescending(j => j.CreatedAt)
-            .Skip(Math.Max(0, skip)).Take(Math.Clamp(take, 1, 200)).ToListAsync(cancellationToken);
-        var result = new List<JobView>(jobs.Count);
-        foreach (var job in jobs)
+        var query = db.Jobs.AsNoTracking().Where(j => j.OrganizationId == org);
+        if (status is { } s)
         {
-            result.Add(await ViewAsync(job, cancellationToken));
+            query = query.Where(j => j.Status == s);
         }
 
-        return result;
+        var jobs = await query.OrderByDescending(j => j.CreatedAt).Skip(Math.Max(0, skip)).Take(Math.Clamp(take, 1, 200)).ToListAsync(cancellationToken);
+        return await ViewsAsync(org, jobs, cancellationToken);
     }
 
     public async Task<ServiceResult<JobView>> GetAsync(Guid jobId, CancellationToken cancellationToken)
     {
         var org = user.OrganizationId;
         var job = await db.Jobs.AsNoTracking().SingleOrDefaultAsync(j => j.OrganizationId == org && j.Id == jobId, cancellationToken);
-        return job is null ? ServiceResult<JobView>.NotFound() : ServiceResult<JobView>.Ok(await ViewAsync(job, cancellationToken));
+        return job is null ? ServiceResult<JobView>.NotFound() : ServiceResult<JobView>.Ok((await ViewsAsync(org, [job], cancellationToken))[0]);
     }
 
     public async Task<ServiceResult<IReadOnlyList<RecordView>>> RecordsAsync(Guid jobId, JobRecordStatus? status, int skip, int take, CancellationToken cancellationToken)
@@ -224,12 +225,19 @@ public sealed class JobService(AutomataFlowDbContext db, ICurrentUser user, Valu
             Parse(r.ResultJson), Parse(r.ValidationErrorsJson), r.CompletedAt))]);
     }
 
-    private async Task<JobView> ViewAsync(Job job, CancellationToken cancellationToken)
+    private async Task<List<JobView>> ViewsAsync(Guid org, IReadOnlyList<Job> jobs, CancellationToken cancellationToken)
     {
-        var counts = await db.JobRecords.AsNoTracking().Where(r => r.OrganizationId == job.OrganizationId && r.JobId == job.Id)
-            .GroupBy(r => r.Status).Select(g => new { g.Key, Count = g.Count() }).ToListAsync(cancellationToken);
-        return new JobView(job.Id, job.WorkflowId, job.WorkflowVersionId, job.Status, job.Options, job.CancelRequested, job.SourceName, job.TotalRecords,
-            job.CreatedAt, job.StartedAt, job.FinishedAt, counts.ToDictionary(c => c.Key.ToString(), c => c.Count, StringComparer.Ordinal));
+        var ids = jobs.Select(j => j.Id).ToList();
+        var versionIds = jobs.Select(j => j.WorkflowVersionId).Distinct().ToList();
+        var counts = await db.JobRecords.AsNoTracking().Where(r => r.OrganizationId == org && ids.Contains(r.JobId))
+            .GroupBy(r => new { r.JobId, r.Status }).Select(g => new { g.Key.JobId, g.Key.Status, Count = g.Count() }).ToListAsync(cancellationToken);
+        var versions = await db.WorkflowVersions.AsNoTracking().Where(v => v.OrganizationId == org && versionIds.Contains(v.Id))
+            .Join(db.Workflows.Where(w => w.OrganizationId == org), v => v.WorkflowId, w => w.Id, (v, w) => new { v.Id, v.VersionNumber, w.Name })
+            .ToDictionaryAsync(v => v.Id, cancellationToken);
+        return [.. jobs.Select(job => new JobView(job.Id, job.WorkflowId, job.WorkflowVersionId, job.Status, job.Options, job.CancelRequested, job.SourceName, job.TotalRecords,
+            job.CreatedAt, job.StartedAt, job.FinishedAt,
+            counts.Where(c => c.JobId == job.Id).ToDictionary(c => c.Status.ToString(), c => c.Count, StringComparer.Ordinal),
+            versions.TryGetValue(job.WorkflowVersionId, out var v) ? v.Name : string.Empty, v?.VersionNumber ?? 0, job.InvalidRecords))];
     }
 
     private async Task<ServiceResult<JobCreated>?> ReplayAsync(Guid org, string key, string fingerprint, CancellationToken cancellationToken)

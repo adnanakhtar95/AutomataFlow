@@ -19,7 +19,11 @@ public sealed class PlatformOptions
     public PlatformMode Mode { get; set; } = PlatformMode.SelfHosted;
 }
 
-public sealed record WorkflowSummary(Guid Id, string Name, string? Description, int LatestVersion, DateTimeOffset CreatedAt);
+/// <param name="PublishedVersionId">The newest published version (the one new jobs normally use), or null.</param>
+public sealed record WorkflowSummary(Guid Id, string Name, string? Description, int LatestVersion, DateTimeOffset CreatedAt, Guid? PublishedVersionId, int? PublishedVersionNumber);
+
+/// <summary>Result of validating a definition without storing it.</summary>
+public sealed record DefinitionValidation(bool Valid, string? DefinitionHash, IReadOnlyList<ServiceError> Errors, IReadOnlyList<ServiceError> Warnings, IReadOnlyList<string> Attestations);
 
 public sealed record VersionSummary(Guid Id, int VersionNumber, WorkflowVersionStatus Status, string DefinitionHash, DateTimeOffset CreatedAt, DateTimeOffset? PublishedAt, string? AcknowledgedAttestations);
 
@@ -34,13 +38,41 @@ public sealed record WorkflowDetail(WorkflowSummary Workflow, IReadOnlyList<Vers
 /// </summary>
 public sealed class WorkflowService(AutomataFlowDbContext db, ICurrentUser user, IOptions<PlatformOptions> platform, TimeProvider clock, ILogger<WorkflowService> logger)
 {
-    public async Task<IReadOnlyList<WorkflowSummary>> ListAsync(int skip, int take, CancellationToken cancellationToken)
+    public const int MaxSearchLength = 64;
+
+    /// <summary>Workflows of the caller's organization by name; <paramref name="search"/> matches name or description (case-insensitive, literal).</summary>
+    public async Task<IReadOnlyList<WorkflowSummary>> ListAsync(string? search, int skip, int take, CancellationToken cancellationToken)
     {
         var org = user.OrganizationId;
-        return await db.Workflows.AsNoTracking().Where(w => w.OrganizationId == org)
-            .OrderBy(w => w.Name).Skip(Math.Max(0, skip)).Take(Math.Clamp(take, 1, 200))
-            .Select(w => new WorkflowSummary(w.Id, w.Name, w.Description, w.LatestVersion, w.CreatedAt))
+        var query = db.Workflows.AsNoTracking().Where(w => w.OrganizationId == org);
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var pattern = "%" + EscapeLike(search.Trim()[..Math.Min(search.Trim().Length, MaxSearchLength)]) + "%";
+            query = query.Where(w => EF.Functions.ILike(w.Name, pattern, "\\") || (w.Description != null && EF.Functions.ILike(w.Description, pattern, "\\")));
+        }
+
+        var rows = await query.OrderBy(w => w.Name).Skip(Math.Max(0, skip)).Take(Math.Clamp(take, 1, 200))
+            .Select(w => new
+            {
+                Workflow = w,
+                Published = db.WorkflowVersions.Where(v => v.OrganizationId == org && v.WorkflowId == w.Id && v.Status == WorkflowVersionStatus.Published)
+                    .OrderByDescending(v => v.VersionNumber).Select(v => new { v.Id, v.VersionNumber }).FirstOrDefault(),
+            })
             .ToListAsync(cancellationToken);
+        return [.. rows.Select(r => Summary(r.Workflow, r.Published?.Id, r.Published?.VersionNumber))];
+    }
+
+    /// <summary>Full validation of a definition (the same rules as saving a draft) without storing anything.</summary>
+    public static DefinitionValidation ValidateDefinition(string definitionJson)
+    {
+        var result = ValidatedWorkflow.CreateForPublication(definitionJson ?? string.Empty);
+        var errors = result.Errors.Select(e => new ServiceError(e.Path, e.Code, e.Message)).ToList();
+        if (result.Workflow is not { } validated)
+        {
+            return new DefinitionValidation(false, null, errors, [], []);
+        }
+
+        return new DefinitionValidation(true, validated.DefinitionHash, errors, Warnings(validated), [.. PublicationPolicy.AttestationsOf(validated.Definition).Select(a => a.ToString())]);
     }
 
     public async Task<ServiceResult<WorkflowDetail>> GetAsync(Guid workflowId, CancellationToken cancellationToken)
@@ -54,7 +86,8 @@ public sealed class WorkflowService(AutomataFlowDbContext db, ICurrentUser user,
 
         var versions = await db.WorkflowVersions.AsNoTracking().Where(v => v.OrganizationId == org && v.WorkflowId == workflowId)
             .OrderBy(v => v.VersionNumber).ToListAsync(cancellationToken);
-        return ServiceResult<WorkflowDetail>.Ok(new WorkflowDetail(Summary(workflow), [.. versions.Select(Summary)]));
+        var published = versions.Where(v => v.Status == WorkflowVersionStatus.Published).MaxBy(v => v.VersionNumber);
+        return ServiceResult<WorkflowDetail>.Ok(new WorkflowDetail(Summary(workflow, published?.Id, published?.VersionNumber), [.. versions.Select(Summary)]));
     }
 
     public async Task<ServiceResult<VersionDetail>> GetVersionAsync(Guid workflowId, Guid versionId, CancellationToken cancellationToken)
@@ -243,7 +276,9 @@ public sealed class WorkflowService(AutomataFlowDbContext db, ICurrentUser user,
         }
     }
 
-    private static WorkflowSummary Summary(Workflow w) => new(w.Id, w.Name, w.Description, w.LatestVersion, w.CreatedAt);
+    private static WorkflowSummary Summary(Workflow w, Guid? publishedId, int? publishedNumber) => new(w.Id, w.Name, w.Description, w.LatestVersion, w.CreatedAt, publishedId, publishedNumber);
+
+    private static string EscapeLike(string value) => value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal);
 
     private static VersionSummary Summary(WorkflowVersion v) => new(v.Id, v.VersionNumber, v.Status, v.DefinitionHash, v.CreatedAt, v.PublishedAt, v.AcknowledgedAttestations);
 }
