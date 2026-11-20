@@ -13,7 +13,7 @@ Status: Draft v0.2. Estimates are indicative planning aids, not deadlines; quali
 | 7 | Production infrastructure and security (docs/PHASE7_PLAN.md) | 3+ | done (2026-11-20) |
 | 8 | Customer onboarding and workspace management (docs/PHASE8_PLAN.md) | 3+ | done (2026-11-20) |
 | 9 | Commercial automation capabilities (docs/PHASE9_PLAN.md) | 3+ | done (2026-11-20) |
-| 10 | Commercial readiness and release (docs/PHASE10_PLAN.md) | 2+ | authorized 2026-11-20 |
+| 10 | Commercial readiness and release (docs/PHASE10_PLAN.md) | 2+ | done (2026-11-20) |
 
 On 2026-11-20 the user authorized Phases 6–10 to be executed consecutively without a pause between phases (docs/DECISIONS.md, "Phases 6–10 authorization"). Each phase still needs its acceptance criteria met, or its remaining limitations explicitly documented, before the next one starts. The former Phase 7 ("Testing, security, Docker, hosted isolation, documentation") is split across Phases 7 and 10; its hosted-isolation items (ADR-031, ADR-056) are carried into Phase 7 and are not dropped silently.
 

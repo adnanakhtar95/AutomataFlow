@@ -60,6 +60,19 @@ public sealed partial class FileSystemArtifactStore(IOptions<ArtifactStorageOpti
     /// <summary>Opens a stored artifact by its key. The caller must already have authorized access to the artifact row.</summary>
     public Stream OpenRead(string storageKey) => new FileStream(PathFor(storageKey), FileMode.Open, FileAccess.Read, FileShare.Read);
 
+    /// <summary>Deletes a stored artifact (retention). Returns false when the file was already gone. The key is validated like every read.</summary>
+    public bool Delete(string storageKey)
+    {
+        var path = PathFor(storageKey);
+        if (!File.Exists(path))
+        {
+            return false;
+        }
+
+        File.Delete(path);
+        return true;
+    }
+
     private string PathFor(string key)
     {
         if (!KeyPattern().IsMatch(key))

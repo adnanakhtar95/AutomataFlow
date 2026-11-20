@@ -142,6 +142,11 @@ public sealed class PlatformWorkspacesController(PlatformWorkspaceService platfo
     [HttpGet]
     public Task<IReadOnlyList<PlatformWorkspaceView>> List(CancellationToken cancellationToken) => platform.ListAsync(cancellationToken);
 
+    /// <summary>Platform operations (Phase 10): queue depth, Worker liveness, execution metrics, artifact storage. Counts only.</summary>
+    [HttpGet("/api/v1/platform/operations")]
+    public Task<AutomataFlow.Infrastructure.Jobs.OperationsView> Operations([FromServices] AutomataFlow.Infrastructure.Jobs.OperationsService operations, CancellationToken cancellationToken) =>
+        operations.GetAsync(cancellationToken);
+
     [HttpPost]
     [ProducesResponseType<PlatformWorkspaceCreated>(StatusCodes.Status201Created)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]

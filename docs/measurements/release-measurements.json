@@ -1,0 +1,75 @@
+{
+    "environment":  {
+                        "date":  "2026-11-20T16:50:04.2975117Z",
+                        "host":  "Docker Desktop (WSL2) on Windows 11; other unrelated container stacks were running on the same host",
+                        "cpus":  "12",
+                        "memoryBytes":  "8102105088",
+                        "workerContainers":  1,
+                        "workerMaxConcurrentAttempts":  2,
+                        "jobMaxConcurrency":  4,
+                        "target":  "DemoCrm test fixture (in-memory, same Docker network)"
+                    },
+    "throughput":  {
+                       "records":  40,
+                       "status":  "Completed",
+                       "recordsByStatus":  {
+                                               "Succeeded":  40
+                                           },
+                       "seconds":  30.8,
+                       "recordsPerMinute":  77.9,
+                       "customersCreated":  40,
+                       "registrationPosts":  40,
+                       "artifactBytesAdded":  2077022,
+                       "artifactBytesPerRecord":  51926,
+                       "peakCpuPercent":  [
+                                              {
+                                                  "container":  "af-e2e-worker-1",
+                                                  "peakCpu":  303.85,
+                                                  "lastMemory":  "349.9MiB"
+                                              },
+                                              {
+                                                  "container":  "af-e2e-api-1",
+                                                  "peakCpu":  38.99,
+                                                  "lastMemory":  "114.9MiB"
+                                              },
+                                              {
+                                                  "container":  "af-e2e-postgres-1",
+                                                  "peakCpu":  10.72,
+                                                  "lastMemory":  "61.83MiB"
+                                              }
+                                          ]
+                   },
+    "databaseInterruption":  {
+                                 "records":  40,
+                                 "outageSeconds":  20,
+                                 "applied":  true,
+                                 "status":  "Completed",
+                                 "recordsByStatus":  {
+                                                         "Succeeded":  40
+                                                     },
+                                 "seconds":  73.7,
+                                 "customersCreated":  40,
+                                 "registrationPosts":  40
+                             },
+    "apiRestart":  {
+                       "records":  40,
+                       "applied":  true,
+                       "status":  "Completed",
+                       "recordsByStatus":  {
+                                               "Succeeded":  40
+                                           },
+                       "seconds":  24.8,
+                       "customersCreated":  40,
+                       "registrationPosts":  40
+                   },
+    "apiLatencyMs":  {
+                         "endpoint":  "GET /api/v1/jobs?take=50 via gateway",
+                         "samples":  50,
+                         "p50":  7.5,
+                         "p95":  9.2,
+                         "max":  40.9
+                     },
+    "postgres":  {
+                     "databaseSize":  "12 MB"
+                 }
+}

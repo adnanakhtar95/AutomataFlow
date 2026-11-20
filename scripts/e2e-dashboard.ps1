@@ -12,7 +12,9 @@
      `docker compose -p af-e2e down -v` yourself).
 #>
 [CmdletBinding()]
-param([switch]$KeepStack, [switch]$SkipBuild)
+param([switch]$KeepStack, [switch]$SkipBuild,
+    # Build, start and bootstrap the stack, then leave it running without browser tests (used by scripts/measure-release.ps1).
+    [switch]$StackOnly)
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -54,6 +56,7 @@ try {
     # Phase 8: the first platform operator, created by the Api's bootstrap command (credentials via environment only).
     docker compose -f $compose run --rm --no-deps -e AF_BOOTSTRAP_PASSWORD=$env:AF_E2E_OPERATOR_PASSWORD -e AF_BOOTSTRAP_EMAIL=$env:AF_E2E_OPERATOR_EMAIL api bootstrap-operator
     if ($LASTEXITCODE -ne 0) { throw 'bootstrap-operator failed' }
+    if ($StackOnly) { $exitCode = 0; $KeepStack = $true; return }
 
     $runner = 'set -e; mkdir -p /tmp/web && cd /repo/web/automataflow-web && tar cf - --exclude=node_modules --exclude=dist --exclude=test-results --exclude=playwright-report . | tar xf - -C /tmp/web && cd /tmp/web && npm ci --no-audit --no-fund --loglevel=error && status=0 && { npx playwright test || status=$?; }; cp -r playwright-report test-results /out/ 2>/dev/null || true; exit $status'
     $out = Join-Path $root 'web/automataflow-web/.e2e-output'

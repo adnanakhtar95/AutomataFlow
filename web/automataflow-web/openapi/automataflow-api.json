@@ -1775,6 +1775,35 @@
         }
       }
     },
+    "/api/v1/platform/operations": {
+      "get": {
+        "tags": [
+          "PlatformWorkspaces"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationsView"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationsView"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationsView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/platform/workspaces/{organizationId}/suspend": {
       "post": {
         "tags": [
@@ -3805,6 +3834,42 @@
         },
         "additionalProperties": false
       },
+      "ExecutionMetrics": {
+        "required": [
+          "attemptsByStatus",
+          "recordsCompleted",
+          "windowHours"
+        ],
+        "type": "object",
+        "properties": {
+          "windowHours": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "attemptsByStatus": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          "averageAttemptSeconds": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "p95AttemptSeconds": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "recordsCompleted": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
       "FenceConfirmationResponse": {
         "required": [
           "accepted",
@@ -4352,6 +4417,38 @@
         },
         "additionalProperties": false
       },
+      "OperationsView": {
+        "required": [
+          "at",
+          "metrics",
+          "queue",
+          "storage",
+          "workers"
+        ],
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "queue": {
+            "$ref": "#/components/schemas/QueueView"
+          },
+          "workers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkerView"
+            }
+          },
+          "metrics": {
+            "$ref": "#/components/schemas/ExecutionMetrics"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/StorageView"
+          }
+        },
+        "additionalProperties": false
+      },
       "OrganizationRole": {
         "enum": [
           "Viewer",
@@ -4527,6 +4624,49 @@
         "properties": {
           "acknowledgeAttestations": {
             "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "QueueView": {
+        "required": [
+          "activeJobs",
+          "awaitingFence",
+          "needsReview",
+          "readyRecords",
+          "runningRecords",
+          "scheduledRetries"
+        ],
+        "type": "object",
+        "properties": {
+          "readyRecords": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "scheduledRetries": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "runningRecords": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "awaitingFence": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "needsReview": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "activeJobs": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "oldestReadyAgeSeconds": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -4707,6 +4847,34 @@
         },
         "additionalProperties": false
       },
+      "StorageView": {
+        "required": [
+          "artifactBytes",
+          "artifactFiles"
+        ],
+        "type": "object",
+        "properties": {
+          "artifactBytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "artifactFiles": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "freeBytes": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true
+          },
+          "totalBytes": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "SwitchRequest": {
         "required": [
           "organizationId"
@@ -4865,6 +5033,42 @@
           "acknowledgedAttestations": {
             "type": "string",
             "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkerView": {
+        "required": [
+          "fenced",
+          "hostId",
+          "incarnationId",
+          "registeredAt"
+        ],
+        "type": "object",
+        "properties": {
+          "incarnationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "hostId": {
+            "type": "string"
+          },
+          "registeredAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastHeartbeatAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "heartbeatAgeSeconds": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "fenced": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false

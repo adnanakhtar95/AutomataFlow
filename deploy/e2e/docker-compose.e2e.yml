@@ -79,8 +79,11 @@ services:
   democrm:
     image: ${AF_E2E_DEMOCRM_IMAGE:?}
     environment:
-      AllowedHosts: democrm
+      AllowedHosts: democrm;127.0.0.1;localhost
       DemoCrm__ControlApi__Token: ${AF_E2E_DEMOCRM_TOKEN:?}
+    # Loopback only: the measurement script reads the target's counters through the control API.
+    ports:
+      - "127.0.0.1:${AF_E2E_DEMOCRM_PORT:-8089}:8080"
     networks: [e2e]
 
   web:

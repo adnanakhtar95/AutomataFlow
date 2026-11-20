@@ -117,3 +117,34 @@ the Worker through the repeat-safety evaluator: `Cancelled` when no side effect 
 - Below-socket queueing (P12) is not verified: the verification kernel cannot load `sch_netem`. The latency attestation (ADR-057) must cover local queueing.
 - The Worker holds the same database credentials as the supervisor. Fence confirmation is validated and audited, but it is not yet restricted to a separate database role (ADR-075).
 - Attestations (`targetEnforced`, `authoritative`, `businessKey`) are trusted, not proven.
+
+## 8. Monitoring and alerts (Phase 10)
+- **Platform → Operations** (platform operators): ready, running and scheduled records, the age of the oldest waiting
+  record, records that need attention (Needs review, Awaiting fence), live Workers with heartbeat age, attempts and
+  attempt durations over 24 hours, artifact volume size and free disk. API: `GET /api/v1/platform/operations`.
+- **Health:** the Api image's `HEALTHCHECK` probes `/health/ready` (database reachable); the gateway probes `/healthz`.
+  `docker compose ps` shows both.
+- **Logs:** every service logs to stdout (Serilog); Docker rotates them (20 MB x 5). Ship them to your log system.
+- **Alerts** (no paid service is required; poll the operations endpoint or use your log system):
+  | Condition | Meaning | Action |
+  |---|---|---|
+  | `queue.oldestReadyAgeSeconds` > 600 with no live Worker | nothing is processing | check the Worker containers |
+  | `queue.needsReview` grows | records the platform will not decide on | §4 |
+  | a Worker heartbeat older than 60 s that is not fenced, plus `awaitingFence` > 0 | a Worker died without a fence | §5 |
+  | free disk < 15 % | artifacts or database growth | §9, extend storage |
+  | Api or gateway unhealthy for 2 checks | outage | `docker compose logs` |
+  | log lines `Worker startup refused`, `af-worker-launch: refused`, `Fence confirmation False` | fail-closed refusals | read the reason; never bypass |
+
+## 9. Artifact retention
+Screenshots and downloads accumulate (measured size per record: docs/PERFORMANCE.md). Delete those older than N days
+(records, results and logs are kept) with a scheduled command, e.g. daily:
+```powershell
+docker compose --env-file deploy/.env.prod -f deploy/docker-compose.prod.yml run --rm --no-deps api purge-artifacts 90
+```
+Choose N from your customers' agreements; there is no automatic deletion.
+
+## 10. Backup verification
+A backup counts only once it was restored. At least monthly, restore the latest backup into a scratch deployment (a
+second project name and port) with `scripts/restore.ps1`, then run `scripts/verify-deployment.ps1` with a smoke job.
+The Phase 7 drill (docs/PHASE7_PLAN.md) is the reference procedure: it proved that a job queued before the backup
+completes after the restore, which requires the restored key ring and its certificate.

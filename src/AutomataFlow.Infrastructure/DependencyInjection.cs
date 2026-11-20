@@ -73,6 +73,11 @@ public static class DependencyInjection
         services.AddScoped<Organizations.WorkspaceService>();
         services.AddScoped<Organizations.InvitationService>();
         services.AddScoped<Organizations.PlatformWorkspaceService>();
+        services.AddScoped(sp => new Jobs.OperationsService(sp.GetRequiredKeyedService<Npgsql.NpgsqlDataSource>(QueueDataSourceKey),
+            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Jobs.ArtifactStorageOptions>>(), sp.GetRequiredService<TimeProvider>()));
+        services.AddScoped(sp => new Jobs.ArtifactRetention(sp.GetRequiredKeyedService<Npgsql.NpgsqlDataSource>(QueueDataSourceKey), sp.GetRequiredService<Jobs.FileSystemArtifactStore>(),
+            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Jobs.ArtifactStorageOptions>>(), sp.GetRequiredService<TimeProvider>(),
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Jobs.ArtifactRetention>>()));
         return services;
     }
 

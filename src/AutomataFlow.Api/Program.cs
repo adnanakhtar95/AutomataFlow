@@ -98,6 +98,22 @@ if (args is ["bootstrap-operator", ..])
     return 0;
 }
 
+// Artifact retention (docs/RUNBOOK.md): `purge-artifacts <days>` deletes screenshots and downloads older than <days>
+// days in every workspace. Explicit and scheduled by the operator; records, results and logs are kept.
+if (args is ["purge-artifacts", var daysArgument, ..])
+{
+    if (!int.TryParse(daysArgument, out var days) || days < AutomataFlow.Infrastructure.Jobs.ArtifactRetention.MinimumDays)
+    {
+        Log.Error("Usage: purge-artifacts <days> (at least {Minimum})", AutomataFlow.Infrastructure.Jobs.ArtifactRetention.MinimumDays);
+        return 2;
+    }
+
+    await using var scope = app.Services.CreateAsyncScope();
+    var purged = await scope.ServiceProvider.GetRequiredService<AutomataFlow.Infrastructure.Jobs.ArtifactRetention>().PurgeAsync(days, CancellationToken.None);
+    Log.Information("Purged {Rows} artifacts ({Bytes} bytes)", purged.Rows, purged.BytesFreed);
+    return 0;
+}
+
 app.UseExceptionHandler();
 app.UseStatusCodePages();
 app.UseSerilogRequestLogging();

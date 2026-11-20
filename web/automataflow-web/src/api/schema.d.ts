@@ -1325,6 +1325,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/platform/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["OperationsView"];
+                        "application/json": components["schemas"]["OperationsView"];
+                        "text/json": components["schemas"]["OperationsView"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/platform/workspaces/{organizationId}/suspend": {
         parameters: {
             query?: never;
@@ -2711,6 +2748,19 @@ export interface components {
             ownershipAmbiguous: boolean;
             readonly provesNoFurtherTransmission: boolean;
         };
+        ExecutionMetrics: {
+            /** Format: int32 */
+            windowHours: number;
+            attemptsByStatus: {
+                [key: string]: number;
+            };
+            /** Format: double */
+            averageAttemptSeconds?: number | null;
+            /** Format: double */
+            p95AttemptSeconds?: number | null;
+            /** Format: int32 */
+            recordsCompleted: number;
+        };
         FenceConfirmationResponse: {
             accepted: boolean;
             /** Format: date-time */
@@ -2870,6 +2920,14 @@ export interface components {
             organizationSlug: string;
             role: string;
         };
+        OperationsView: {
+            /** Format: date-time */
+            at: string;
+            queue: components["schemas"]["QueueView"];
+            workers: components["schemas"]["WorkerView"][];
+            metrics: components["schemas"]["ExecutionMetrics"];
+            storage: components["schemas"]["StorageView"];
+        };
         /** @enum {string} */
         OrganizationRole: "Viewer" | "Operator" | "Admin" | "Owner";
         /** @enum {string} */
@@ -2926,6 +2984,22 @@ export interface components {
         PublishRequest: {
             acknowledgeAttestations: boolean;
         };
+        QueueView: {
+            /** Format: int32 */
+            readyRecords: number;
+            /** Format: int32 */
+            scheduledRetries: number;
+            /** Format: int32 */
+            runningRecords: number;
+            /** Format: int32 */
+            awaitingFence: number;
+            /** Format: int32 */
+            needsReview: number;
+            /** Format: int32 */
+            activeJobs: number;
+            /** Format: double */
+            oldestReadyAgeSeconds?: number | null;
+        };
         RecentWorkflow: {
             /** Format: uuid */
             id: string;
@@ -2979,6 +3053,16 @@ export interface components {
         SetSecretRequest: {
             value: string;
         };
+        StorageView: {
+            /** Format: int64 */
+            artifactBytes: number;
+            /** Format: int32 */
+            artifactFiles: number;
+            /** Format: int64 */
+            freeBytes?: number | null;
+            /** Format: int64 */
+            totalBytes?: number | null;
+        };
         SwitchRequest: {
             /** Format: uuid */
             organizationId: string;
@@ -3027,6 +3111,18 @@ export interface components {
             /** Format: date-time */
             publishedAt?: string | null;
             acknowledgedAttestations?: string | null;
+        };
+        WorkerView: {
+            /** Format: uuid */
+            incarnationId: string;
+            hostId: string;
+            /** Format: date-time */
+            registeredAt: string;
+            /** Format: date-time */
+            lastHeartbeatAt?: string | null;
+            /** Format: double */
+            heartbeatAgeSeconds?: number | null;
+            fenced: boolean;
         };
         WorkflowCatalog: {
             /** Format: int32 */

@@ -5,6 +5,7 @@ import { useApp } from '../../app/AppContext';
 import { Button, Card, ErrorState, Field, PageHeader, Spinner, StatusBadge, Table, inputClass } from '../../components/ui';
 import { formatDateTime } from '../../lib/format';
 import { invitationLink } from '../settings/MembersPage';
+import { OperationsCard } from './OperationsCard';
 
 /** Platform operators only (never a workspace role): onboard, suspend and reactivate workspaces. Counts only, no customer data. */
 export function PlatformWorkspacesPage() {
@@ -43,6 +44,9 @@ export function PlatformWorkspacesPage() {
   return (
     <>
       <PageHeader title="Platform: workspaces" description="Onboard customer workspaces and control their status. Only platform operators see this page." />
+      <div className="mb-6">
+        <OperationsCard />
+      </div>
       <div className="grid gap-6 lg:grid-cols-3">
         <Card title="Workspaces" className="lg:col-span-2">
           {workspaces.isPending ? (
