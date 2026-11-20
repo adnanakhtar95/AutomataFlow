@@ -1,0 +1,32 @@
+@page
+@model DemoCrm.Pages.Orders.SearchModel
+@using DemoCrm.BackOffice
+@{
+    ViewData["Title"] = "Find order";
+}
+<h1 data-testid="page-title">Find order by reference</h1>
+<form method="get">
+    <label for="Reference">Order reference</label>
+    <input id="Reference" name="Reference" type="text" value="@Model.Reference" data-testid="order-search-reference" />
+    <button type="submit" data-testid="order-search-submit">Find</button>
+</form>
+@if (Model.Searched)
+{
+    @if (Model.Found is null)
+    {
+        <p class="empty" data-testid="order-search-empty">No order with this reference.</p>
+    }
+    else
+    {
+        <table>
+            <thead><tr><th>Order</th><th>Customer</th><th>Total</th></tr></thead>
+            <tbody>
+                <tr data-testid="order-search-row" data-operation-id="@Model.Found.OperationId" data-order-number="@Model.Found.Number" data-total="@BackOfficeStore.FormatAmount(Model.Found.Total)">
+                    <td>@Model.Found.Number</td>
+                    <td>@Model.Found.CustomerEmail</td>
+                    <td>@BackOfficeStore.FormatAmount(Model.Found.Total)</td>
+                </tr>
+            </tbody>
+        </table>
+    }
+}

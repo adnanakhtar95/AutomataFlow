@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "name": "democrm-register-customer",
+  "description": "Signs in to DemoCrm and registers one customer from a record, duplicate-safe.",
+  "timeoutSeconds": 120,
+  "parameters": [ { "name": "crmBaseUrl", "type": "url" }, { "name": "crmUser", "type": "string" } ],
+  "allowedHosts": [ "{{params.crmBaseUrl}}" ],
+  "secrets": [ "crmPassword" ],
+  "inputs": [
+    { "name": "firstName", "type": "string", "required": true, "maxLength": 60 },
+    { "name": "lastName", "type": "string", "required": true, "maxLength": 60 },
+    { "name": "email", "type": "email", "required": true, "maxLength": 120 },
+    { "name": "phone", "type": "string", "required": true, "maxLength": 30 },
+    { "name": "company", "type": "string", "required": false, "maxLength": 80 },
+    { "name": "country", "type": "string", "required": true, "maxLength": 60 },
+    { "name": "customerType", "type": "string", "required": true, "maxLength": 30 }
+  ],
+  "reconciliation": { "evidence": "advisory", "matchKey": "operationId" },
+  "setup": [
+    { "id": "open-login", "type": "navigate", "config": { "url": "{{params.crmBaseUrl}}/Login" } },
+    { "id": "user", "type": "fill", "config": { "selector": { "testId": "login-email" }, "value": "{{params.crmUser}}" } },
+    { "id": "password", "type": "fill", "config": { "selector": { "testId": "login-password" }, "value": "{{secret.crmPassword}}" } },
+    { "id": "sign-in", "type": "click", "config": { "selector": { "testId": "login-submit" }, "waitForNavigation": true } },
+    { "id": "signed-in", "type": "wait", "config": { "for": "visible", "selector": { "testId": "current-user" } } }
+  ],
+  "reconcile": [
+    { "id": "find", "type": "navigate", "config": { "url": "{{params.crmBaseUrl}}/Customers/Search?Field=OperationId&Term={{operation.id}}" } },
+    { "id": "match", "type": "reconcileMatch", "config": {
+        "rows": { "testId": "search-result-row" },
+        "key": { "attribute": "data-operation-id" },
+        "equals": "{{operation.id}}",
+        "ignoreCase": false,
+        "emptyIndicator": { "testId": "search-no-results" },
+        "maxRows": 5,
+        "fields": { "customerId": { "attribute": "data-customer-id" } } } }
+  ],
+  "steps": [
+    { "id": "open-register", "type": "navigate", "config": { "url": "{{params.crmBaseUrl}}/Customers/Register" } },
+    { "id": "first-name", "type": "fill", "config": { "selector": { "testId": "input-first-name" }, "value": "{{record.firstName}}" } },
+    { "id": "last-name", "type": "fill", "config": { "selector": { "testId": "input-last-name" }, "value": "{{record.lastName}}" } },
+    { "id": "email", "type": "fill", "config": { "selector": { "testId": "input-email" }, "value": "{{record.email}}" } },
+    { "id": "phone", "type": "fill", "config": { "selector": { "testId": "input-phone" }, "value": "{{record.phone}}" } },
+    { "id": "company", "type": "fill", "config": { "selector": { "testId": "input-company" }, "value": "{{record.company}}" } },
+    { "id": "country", "type": "select", "config": { "selector": { "testId": "input-country" }, "label": "{{record.country}}" } },
+    { "id": "type", "type": "select", "config": { "selector": { "testId": "input-customer-type" }, "value": "{{record.customerType}}" } },
+    { "id": "operation", "type": "fill", "config": { "selector": { "testId": "input-operation-id" }, "value": "{{operation.id}}" } },
+    { "id": "terms", "type": "click", "sideEffect": false, "config": { "selector": { "testId": "input-accept-terms" } } },
+    { "id": "submit", "type": "click", "sideEffect": true, "timeoutMs": 30000,
+      "idempotency": { "key": "{{operation.id}}", "guarantee": "targetEnforced" },
+      "config": { "selector": { "testId": "register-submit" }, "waitForNavigation": true } },
+    { "id": "outcome", "type": "condition", "config": {
+        "if": { "urlMatches": "**/Customers/Confirmation/**" },
+        "then": [
+          { "id": "customer-id", "type": "extract", "config": { "selector": { "testId": "confirmation-customer-id" }, "source": "text", "maxLength": 20 } },
+          { "id": "result-kind", "type": "extract", "config": { "selector": { "testId": "confirmation-message" }, "source": "attribute", "attribute": "data-result", "maxLength": 20 } },
+          { "id": "confirmation", "type": "screenshot", "config": { "label": "confirmation" } },
+          { "id": "done", "type": "captureResult", "config": {
+              "fields": { "customerId": "{{steps.customer-id.value}}", "registration": "{{steps.result-kind.value}}" },
+              "outcome": { "status": "succeeded" } } }
+        ],
+        "else": [
+          { "id": "error-kind", "type": "extract", "config": { "selector": { "testId": "form-error" }, "source": "attribute", "attribute": "data-error-kind", "maxLength": 40 } },
+          { "id": "classify", "type": "condition", "config": {
+              "if": { "valueEquals": { "left": "{{steps.error-kind.value}}", "right": "duplicate" } },
+              "then": [
+                { "id": "existing", "type": "extract", "config": { "selector": { "testId": "form-error" }, "source": "attribute", "attribute": "data-existing-customer-id", "maxLength": 20 } },
+                { "id": "duplicate", "type": "captureResult", "config": {
+                    "fields": { "existingCustomerId": "{{steps.existing.value}}" },
+                    "outcome": { "status": "failed", "code": "DuplicateCustomer", "transient": false } } }
+              ],
+              "else": [
+                { "id": "rejected", "type": "captureResult", "config": {
+                    "fields": { "errorKind": "{{steps.error-kind.value}}" },
+                    "outcome": { "status": "failed", "code": "RegistrationRejected", "transientWhen": { "valueEquals": { "left": "{{steps.error-kind.value}}", "right": "temporary" } } } } }
+              ] } }
+        ] } }
+  ]
+}

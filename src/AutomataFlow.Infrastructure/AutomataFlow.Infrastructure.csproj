@@ -18,4 +18,8 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
   </ItemGroup>
+  <ItemGroup>
+    <!-- Workflow packages (Phase 9): the tested package files are the templates the Api serves. -->
+    <EmbeddedResource Include="..\..\packages\*\manifest.json;..\..\packages\*\workflow.json;..\..\packages\*\sample.csv" LogicalName="packages/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
 </Project>

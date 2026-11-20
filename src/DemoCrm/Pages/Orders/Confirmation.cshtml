@@ -1,0 +1,13 @@
+@page "{id:int}"
+@model DemoCrm.Pages.Orders.ConfirmationModel
+@using DemoCrm.BackOffice
+@{
+    ViewData["Title"] = "Order placed";
+}
+<h1 data-testid="page-title">Order confirmation</h1>
+<div class="banner success" role="status" data-testid="order-confirmation" data-result="@Model.Result">
+    @(Model.Result == "replayed" ? "This order was already placed." : "Order placed.")
+</div>
+<p>Order number: <strong data-testid="order-number">@Model.Order.Number</strong></p>
+<p>Total: <span data-testid="order-total" data-amount="@BackOfficeStore.FormatAmount(Model.Order.Total)">@BackOfficeStore.FormatAmount(Model.Order.Total) EUR</span></p>
+<p><a href="/Orders/New" data-testid="new-order">Place another order</a></p>

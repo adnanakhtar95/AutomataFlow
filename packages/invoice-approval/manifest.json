@@ -1,0 +1,7 @@
+{
+    "summary":  "Opens each supplier invoice, checks the amount against the expected amount, and approves it. Invoices already approved are reported as such; mismatching amounts are never approved.",
+    "title":  "Invoice approval",
+    "category":  "Finance",
+    "setup":  "Parameters: backOfficeUrl, backOfficeUser. Secret: backOfficePassword. expectedAmount must use the target\u0027s format (two decimals, dot separator).",
+    "id":  "invoice-approval"
+}

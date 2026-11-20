@@ -10,6 +10,9 @@ builder.Services.Configure<DemoCrmOptions>(builder.Configuration.GetSection(Demo
 builder.Services.AddSingleton<ICustomerStore, InMemoryCustomerStore>();
 builder.Services.AddSingleton<FailureSimulator>();
 builder.Services.AddSingleton<RegistrationCounter>();
+builder.Services.AddSingleton<DemoCrm.BackOffice.BackOfficeStore>();
+builder.Services.AddSingleton<DemoCrm.BackOffice.OrderCounter>();
+builder.Services.AddSingleton<DemoCrm.BackOffice.ApprovalCounter>();
 builder.Services.AddSingleton<DemoUserAuthenticator>();
 builder.Services.AddSingleton(TimeProvider.System);
 

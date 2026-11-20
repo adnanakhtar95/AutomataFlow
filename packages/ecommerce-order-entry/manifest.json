@@ -1,0 +1,7 @@
+{
+    "summary":  "Enters orders (customer, product, quantity, shipping, purchase order) into a back-office order desk. Each order carries an order reference so the target refuses duplicates; uncertain submissions are reconciled by searching that reference.",
+    "title":  "E-commerce order entry",
+    "category":  "Sales",
+    "setup":  "Parameters: shopBaseUrl, shopUser. Secret: shopPassword. Unknown customers, unknown products and insufficient stock are reported per record.",
+    "id":  "ecommerce-order-entry"
+}

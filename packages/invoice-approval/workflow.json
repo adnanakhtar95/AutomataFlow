@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "name": "invoice-approval",
+  "description": "Approves supplier invoices in a back office after checking the expected amount; never approves twice.",
+  "timeoutSeconds": 120,
+  "parameters": [ { "name": "backOfficeUrl", "type": "url" }, { "name": "backOfficeUser", "type": "string" } ],
+  "allowedHosts": [ "{{params.backOfficeUrl}}" ],
+  "secrets": [ "backOfficePassword" ],
+  "inputs": [
+    { "name": "invoiceNumber", "type": "string", "required": true, "maxLength": 20 },
+    { "name": "expectedAmount", "type": "string", "required": true, "maxLength": 20 }
+  ],
+  "reconciliation": { "evidence": "advisory", "matchKey": "operationId" },
+  "setup": [
+    { "id": "open-login", "type": "navigate", "config": { "url": "{{params.backOfficeUrl}}/Login" } },
+    { "id": "user", "type": "fill", "config": { "selector": { "testId": "login-email" }, "value": "{{params.backOfficeUser}}" } },
+    { "id": "password", "type": "fill", "config": { "selector": { "testId": "login-password" }, "value": "{{secret.backOfficePassword}}" } },
+    { "id": "sign-in", "type": "click", "config": { "selector": { "testId": "login-submit" }, "waitForNavigation": true } },
+    { "id": "signed-in", "type": "wait", "config": { "for": "visible", "selector": { "testId": "current-user" } } }
+  ],
+  "reconcile": [
+    { "id": "find", "type": "navigate", "config": { "url": "{{params.backOfficeUrl}}/Invoices?Number={{record.invoiceNumber}}" } },
+    { "id": "match", "type": "reconcileMatch", "config": {
+        "rows": { "testId": "invoice-row" },
+        "key": { "attribute": "data-approval-operation" },
+        "equals": "{{operation.id}}",
+        "ignoreCase": true,
+        "emptyIndicator": { "testId": "invoice-pending" },
+        "maxRows": 1,
+        "fields": { "approvalReference": { "attribute": "data-approval-reference" } } } }
+  ],
+  "steps": [
+    { "id": "open-invoice", "type": "navigate", "config": { "url": "{{params.backOfficeUrl}}/Invoices?Number={{record.invoiceNumber}}" } },
+    { "id": "known", "type": "condition", "config": {
+        "if": { "elementExists": { "testId": "invoice-not-found" } },
+        "then": [
+          { "id": "not-found", "type": "captureResult", "config": {
+              "fields": {}, "outcome": { "status": "failed", "code": "InvoiceNotFound", "transient": false } } }
+        ],
+        "else": [] } },
+    { "id": "amount", "type": "extract", "config": { "selector": { "testId": "invoice-row" }, "source": "attribute", "attribute": "data-amount", "maxLength": 20 } },
+    { "id": "status", "type": "extract", "config": { "selector": { "testId": "invoice-row" }, "source": "attribute", "attribute": "data-status", "maxLength": 20 } },
+    { "id": "amount-check", "type": "condition", "config": {
+        "if": { "not": { "valueEquals": { "left": "{{steps.amount.value}}", "right": "{{record.expectedAmount}}" } } },
+        "then": [
+          { "id": "mismatch", "type": "captureResult", "config": {
+              "fields": { "actualAmount": "{{steps.amount.value}}" },
+              "outcome": { "status": "failed", "code": "AmountMismatch", "transient": false } } }
+        ],
+        "else": [] } },
+    { "id": "status-check", "type": "condition", "config": {
+        "if": { "valueEquals": { "left": "{{steps.status.value}}", "right": "Approved" } },
+        "then": [
+          { "id": "existing-reference", "type": "extract", "config": { "selector": { "testId": "approval-reference" }, "source": "text", "maxLength": 20 } },
+          { "id": "already", "type": "captureResult", "config": {
+              "fields": { "existingApprovalReference": "{{steps.existing-reference.value}}", "alreadyApproved": "true" },
+              "outcome": { "status": "succeeded" } } }
+        ],
+        "else": [] } },
+    { "id": "reference", "type": "fill", "config": { "selector": { "testId": "approve-operation-id" }, "value": "{{operation.id}}" } },
+    { "id": "approve", "type": "click", "sideEffect": true, "timeoutMs": 30000,
+      "idempotency": { "key": "{{operation.id}}", "guarantee": "targetEnforced" },
+      "config": { "selector": { "testId": "approve-invoice" }, "waitForNavigation": true } },
+    { "id": "outcome", "type": "condition", "config": {
+        "if": { "elementExists": { "testId": "approval-reference" } },
+        "then": [
+          { "id": "new-reference", "type": "extract", "config": { "selector": { "testId": "approval-reference" }, "source": "text", "maxLength": 20 } },
+          { "id": "evidence", "type": "screenshot", "config": { "label": "invoice-approved" } },
+          { "id": "done", "type": "captureResult", "config": {
+              "fields": { "approvalReference": "{{steps.new-reference.value}}" },
+              "outcome": { "status": "succeeded" } } }
+        ],
+        "else": [
+          { "id": "error-kind", "type": "extract", "config": { "selector": { "testId": "invoice-error" }, "source": "attribute", "attribute": "data-error-kind", "maxLength": 40 } },
+          { "id": "failed", "type": "captureResult", "config": {
+              "fields": { "errorKind": "{{steps.error-kind.value}}" },
+              "outcome": { "status": "failed", "code": "ApprovalFailed",
+                "transientWhen": { "valueEquals": { "left": "{{steps.error-kind.value}}", "right": "temporary" } } } } }
+        ] } }
+  ]
+}

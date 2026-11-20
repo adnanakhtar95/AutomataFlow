@@ -20,7 +20,8 @@ public static class DemoControlEndpoints
     {
         var group = endpoints.MapGroup("/demo").AllowAnonymous().DisableAntiforgery();
 
-        group.MapPost("/reset", (HttpContext context, IOptions<DemoCrmOptions> options, ICustomerStore store, FailureSimulator simulator, RegistrationCounter counter) =>
+        group.MapPost("/reset", (HttpContext context, IOptions<DemoCrmOptions> options, ICustomerStore store, FailureSimulator simulator, RegistrationCounter counter,
+            BackOffice.BackOfficeStore backOffice, BackOffice.OrderCounter orders, BackOffice.ApprovalCounter approvals) =>
         {
             if (Authorize(context, options.Value) is { } denied)
             {
@@ -30,17 +31,21 @@ public static class DemoControlEndpoints
             store.Reset();
             simulator.Reset();
             counter.Reset();
+            backOffice.Reset();
+            orders.Reset();
+            approvals.Reset();
             return Results.NoContent();
         });
 
-        group.MapGet("/state", (HttpContext context, IOptions<DemoCrmOptions> options, ICustomerStore store, FailureSimulator simulator, RegistrationCounter counter) =>
+        group.MapGet("/state", (HttpContext context, IOptions<DemoCrmOptions> options, ICustomerStore store, FailureSimulator simulator, RegistrationCounter counter,
+            BackOffice.BackOfficeStore backOffice, BackOffice.OrderCounter orders, BackOffice.ApprovalCounter approvals) =>
         {
             if (Authorize(context, options.Value) is { } denied)
             {
                 return denied;
             }
 
-            return Results.Ok(new DemoStateDto(store.Count, store.SeededCount, simulator.TrackedAddresses, counter.Count));
+            return Results.Ok(new DemoStateDto(store.Count, store.SeededCount, simulator.TrackedAddresses, counter.Count, backOffice.OrderCount, orders.Count, backOffice.ApprovalCount, approvals.Count));
         });
 
         return endpoints;
@@ -62,4 +67,5 @@ public static class DemoControlEndpoints
     }
 }
 
-public sealed record DemoStateDto(int CustomerCount, int SeededCount, int SimulatedAddresses, int RegistrationSubmissions);
+/// <summary>Demo state counts. Submissions count every POST (before validation), so tests detect any resubmission.</summary>
+public sealed record DemoStateDto(int CustomerCount, int SeededCount, int SimulatedAddresses, int RegistrationSubmissions, int OrderCount = 0, int OrderSubmissions = 0, int ApprovalCount = 0, int ApprovalSubmissions = 0);

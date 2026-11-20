@@ -66,6 +66,7 @@ public static class DependencyInjection
         ArgumentNullException.ThrowIfNull(services);
         services.AddScoped<SecretService>();
         services.AddScoped<WorkflowService>();
+        services.AddScoped<WorkflowTemplateService>();
         services.AddScoped<Jobs.JobService>();
         services.AddScoped<Jobs.ExecutionQueryService>();
         services.AddScoped<Jobs.OverviewService>();

@@ -1,0 +1,43 @@
+@page
+@model DemoCrm.Pages.Orders.NewModel
+@using DemoCrm.BackOffice
+@{
+    ViewData["Title"] = "New order";
+}
+<h1 data-testid="page-title">New order</h1>
+@if (Model.ErrorMessage is not null)
+{
+    <div class="banner error" role="alert" data-testid="order-error" data-error-kind="@Model.ErrorKind">@Model.ErrorMessage</div>
+}
+<form method="post" novalidate data-testid="order-form">
+    <label for="Input_CustomerEmail">Customer e-mail</label>
+    <input id="Input_CustomerEmail" name="Input.CustomerEmail" type="text" value="@Model.Input.CustomerEmail" data-testid="order-customer-email" />
+
+    <label for="Input_Sku">Product</label>
+    <select id="Input_Sku" name="Input.Sku" data-testid="order-sku">
+        <option value="">Select a product</option>
+        @foreach (var item in BackOfficeStore.Catalog)
+        {
+            <option value="@item.Sku" selected="@(item.Sku == Model.Input.Sku)">@item.Name (@BackOfficeStore.FormatAmount(item.UnitPrice))</option>
+        }
+    </select>
+
+    <label for="Input_Quantity">Quantity</label>
+    <input id="Input_Quantity" name="Input.Quantity" type="text" value="@Model.Input.Quantity" data-testid="order-quantity" />
+
+    <label for="Input_Shipping">Shipping</label>
+    <select id="Input_Shipping" name="Input.Shipping" data-testid="order-shipping">
+        @foreach (var rate in BackOfficeStore.ShippingRates.Keys)
+        {
+            <option value="@rate" selected="@(rate == Model.Input.Shipping)">@rate</option>
+        }
+    </select>
+
+    <label for="Input_PurchaseOrder">Purchase order</label>
+    <input id="Input_PurchaseOrder" name="Input.PurchaseOrder" type="text" value="@Model.Input.PurchaseOrder" data-testid="order-purchase-order" />
+
+    <label for="Input_OperationId">Order reference (idempotency)</label>
+    <input id="Input_OperationId" name="Input.OperationId" type="text" value="@Model.Input.OperationId" data-testid="order-operation-id" />
+
+    <button type="submit" data-testid="order-submit">Place order</button>
+</form>

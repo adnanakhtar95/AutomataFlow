@@ -1,0 +1,7 @@
+{
+    "summary":  "Registers new customers in a CRM from a spreadsheet, duplicate-safe: a retried or crashed submission is reconciled by its operation reference, never repeated blindly. Duplicate e-mail addresses or phone numbers are reported, not re-created.",
+    "title":  "CRM customer registration",
+    "category":  "CRM",
+    "setup":  "Parameters: crmBaseUrl (the CRM origin), crmUser (the automation account). Secret: crmPassword. Requires the CRM to accept and search by an operation reference (idempotency key).",
+    "id":  "crm-customer-registration"
+}

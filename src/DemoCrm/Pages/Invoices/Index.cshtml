@@ -1,0 +1,50 @@
+@page
+@model DemoCrm.Pages.Invoices.IndexModel
+@using DemoCrm.BackOffice
+@{
+    ViewData["Title"] = "Invoice approval";
+}
+<h1 data-testid="page-title">Invoice approval</h1>
+<form method="get">
+    <label for="Number">Invoice number</label>
+    <input id="Number" name="Number" type="text" value="@Model.Number" data-testid="invoice-search-number" />
+    <button type="submit" data-testid="invoice-search-submit">Open</button>
+</form>
+@if (Model.Notice is not null)
+{
+    <div class="banner error" role="alert" data-testid="invoice-error" data-error-kind="@Model.ErrorKind">@Model.Notice</div>
+}
+@if (!string.IsNullOrWhiteSpace(Model.Number) && Model.Invoice is null && Model.Notice is null)
+{
+    <p class="empty" data-testid="invoice-not-found">No invoice with this number.</p>
+}
+@if (Model.Invoice is { } invoice)
+{
+    <table>
+        <thead><tr><th>Invoice</th><th>Supplier</th><th>Amount</th><th>Status</th></tr></thead>
+        <tbody>
+            <tr data-testid="invoice-row" data-invoice-number="@invoice.Number" data-amount="@BackOfficeStore.FormatAmount(invoice.Amount)"
+                data-status="@(invoice.Approved ? "Approved" : "Pending")" data-approval-reference="@(invoice.ApprovalReference ?? string.Empty)"
+                data-approval-operation="@(invoice.ApprovalOperationId ?? string.Empty)">
+                <td data-testid="invoice-number">@invoice.Number</td>
+                <td data-testid="invoice-supplier">@invoice.Supplier</td>
+                <td data-testid="invoice-amount">@BackOfficeStore.FormatAmount(invoice.Amount) @invoice.Currency</td>
+                <td data-testid="invoice-status">@(invoice.Approved ? "Approved" : "Pending")</td>
+            </tr>
+        </tbody>
+    </table>
+    @if (invoice.Approved)
+    {
+        <p data-testid="invoice-approved">Approved: <strong data-testid="approval-reference">@invoice.ApprovalReference</strong></p>
+    }
+    else
+    {
+        <p class="empty" data-testid="invoice-pending">Awaiting approval.</p>
+        <form method="post" asp-page-handler="Approve" data-testid="approve-form">
+            <input type="hidden" name="Number" value="@invoice.Number" />
+            <label for="OperationId">Approval reference (idempotency)</label>
+            <input id="OperationId" name="OperationId" type="text" value="" data-testid="approve-operation-id" />
+            <button type="submit" data-testid="approve-invoice">Approve invoice</button>
+        </form>
+    }
+}

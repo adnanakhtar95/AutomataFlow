@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "name": "ecommerce-order-entry",
+  "description": "Enters customer orders into a back-office order desk, duplicate-safe by order reference.",
+  "timeoutSeconds": 120,
+  "parameters": [ { "name": "shopBaseUrl", "type": "url" }, { "name": "shopUser", "type": "string" } ],
+  "allowedHosts": [ "{{params.shopBaseUrl}}" ],
+  "secrets": [ "shopPassword" ],
+  "inputs": [
+    { "name": "customerEmail", "type": "email", "required": true, "maxLength": 120 },
+    { "name": "sku", "type": "string", "required": true, "maxLength": 20 },
+    { "name": "quantity", "type": "integer", "required": true },
+    { "name": "shipping", "type": "string", "required": true, "maxLength": 20 },
+    { "name": "purchaseOrder", "type": "string", "required": true, "maxLength": 40 }
+  ],
+  "reconciliation": { "evidence": "advisory", "matchKey": "operationId" },
+  "setup": [
+    { "id": "open-login", "type": "navigate", "config": { "url": "{{params.shopBaseUrl}}/Login" } },
+    { "id": "user", "type": "fill", "config": { "selector": { "testId": "login-email" }, "value": "{{params.shopUser}}" } },
+    { "id": "password", "type": "fill", "config": { "selector": { "testId": "login-password" }, "value": "{{secret.shopPassword}}" } },
+    { "id": "sign-in", "type": "click", "config": { "selector": { "testId": "login-submit" }, "waitForNavigation": true } },
+    { "id": "signed-in", "type": "wait", "config": { "for": "visible", "selector": { "testId": "current-user" } } }
+  ],
+  "reconcile": [
+    { "id": "find", "type": "navigate", "config": { "url": "{{params.shopBaseUrl}}/Orders/Search?Reference={{operation.id}}" } },
+    { "id": "match", "type": "reconcileMatch", "config": {
+        "rows": { "testId": "order-search-row" },
+        "key": { "attribute": "data-operation-id" },
+        "equals": "{{operation.id}}",
+        "ignoreCase": true,
+        "emptyIndicator": { "testId": "order-search-empty" },
+        "maxRows": 1,
+        "fields": { "orderNumber": { "attribute": "data-order-number" }, "total": { "attribute": "data-total" } } } }
+  ],
+  "steps": [
+    { "id": "open-form", "type": "navigate", "config": { "url": "{{params.shopBaseUrl}}/Orders/New" } },
+    { "id": "customer", "type": "fill", "config": { "selector": { "testId": "order-customer-email" }, "value": "{{record.customerEmail}}" } },
+    { "id": "product", "type": "select", "config": { "selector": { "testId": "order-sku" }, "value": "{{record.sku}}" } },
+    { "id": "quantity", "type": "fill", "config": { "selector": { "testId": "order-quantity" }, "value": "{{record.quantity}}" } },
+    { "id": "shipping", "type": "select", "config": { "selector": { "testId": "order-shipping" }, "value": "{{record.shipping}}" } },
+    { "id": "purchase-order", "type": "fill", "config": { "selector": { "testId": "order-purchase-order" }, "value": "{{record.purchaseOrder}}" } },
+    { "id": "reference", "type": "fill", "config": { "selector": { "testId": "order-operation-id" }, "value": "{{operation.id}}" } },
+    { "id": "submit", "type": "click", "sideEffect": true, "timeoutMs": 30000,
+      "idempotency": { "key": "{{operation.id}}", "guarantee": "targetEnforced" },
+      "config": { "selector": { "testId": "order-submit" }, "waitForNavigation": true } },
+    { "id": "outcome", "type": "condition", "config": {
+        "if": { "urlMatches": "**/Orders/Confirmation/**" },
+        "then": [
+          { "id": "order-number", "type": "extract", "config": { "selector": { "testId": "order-number" }, "source": "text", "maxLength": 20 } },
+          { "id": "order-total", "type": "extract", "config": { "selector": { "testId": "order-total" }, "source": "attribute", "attribute": "data-amount", "maxLength": 20 } },
+          { "id": "confirmation", "type": "screenshot", "config": { "label": "order-confirmation" } },
+          { "id": "done", "type": "captureResult", "config": {
+              "fields": { "orderNumber": "{{steps.order-number.value}}", "total": "{{steps.order-total.value}}" },
+              "outcome": { "status": "succeeded" } } }
+        ],
+        "else": [
+          { "id": "error-kind", "type": "extract", "config": { "selector": { "testId": "order-error" }, "source": "attribute", "attribute": "data-error-kind", "maxLength": 40 } },
+          { "id": "rejected", "type": "captureResult", "config": {
+              "fields": { "errorKind": "{{steps.error-kind.value}}" },
+              "outcome": { "status": "failed", "code": "OrderRejected",
+                "transientWhen": { "valueEquals": { "left": "{{steps.error-kind.value}}", "right": "temporary" } } } } }
+        ] } }
+  ]
+}

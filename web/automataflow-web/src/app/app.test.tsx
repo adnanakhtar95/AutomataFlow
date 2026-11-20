@@ -30,6 +30,10 @@ const catalog = {
   idempotencyGuarantees: ['targetEnforced'],
 };
 
+const templates = [
+  { id: 'invoice-approval', title: 'Invoice approval', category: 'Finance', summary: 'Approves invoices after checking the amount.', setup: 'Parameters: backOfficeUrl.' },
+];
+
 describe('authentication and routing', () => {
   it('sends a signed-out visitor to sign-in, then back to the page they asked for', async () => {
     const user = userEvent.setup();
@@ -94,7 +98,8 @@ describe('role-aware navigation', () => {
 
 describe('workflow editor', () => {
   it('offers in each section only the actions the Api catalog allows there', async () => {
-    renderApp('/workflows/new', { signedIn: 'Operator', handlers: [on('GET', '/api/v1/workflow-catalog', () => json(catalog))] });
+    renderApp('/workflows/new', { signedIn: 'Operator', handlers: [on('GET', '/api/v1/workflow-catalog', () => json(catalog)),
+        on('GET', '/api/v1/workflow-templates', () => json(templates))] });
 
     const steps = await screen.findByLabelText('Action to add to steps');
     const options = (select: HTMLElement) => within(select).getAllByRole('option').map((o) => o.textContent);
@@ -110,6 +115,7 @@ describe('workflow editor', () => {
       signedIn: 'Operator',
       handlers: [
         on('GET', '/api/v1/workflow-catalog', () => json(catalog)),
+        on('GET', '/api/v1/workflow-templates', () => json(templates)),
         on('POST', '/api/v1/workflows/validate', async (r) => {
           sent = await r.json();
           return json({ valid: false, definitionHash: null, errors: [{ path: 'steps[1].config.selector', code: 'selector-empty', message: 'A selector value is required.' }], warnings: [], attestations: [] });
@@ -127,6 +133,32 @@ describe('workflow editor', () => {
     const definition = (sent as { definition: { steps: { id: string; type: string }[] } }).definition;
     expect(definition.steps.map((s) => s.type)).toEqual(['navigate', 'click']);
     expect(definition.steps[1]!.id).toBe('click-1');
+  });
+});
+
+describe('workflow templates', () => {
+  it('creates a draft from a template under the chosen name and opens it', async () => {
+    const user = userEvent.setup();
+    let body: unknown = null;
+    const app = renderApp('/workflows/new', {
+      signedIn: 'Operator',
+      handlers: [
+        on('GET', '/api/v1/workflow-catalog', () => json(catalog)),
+        on('GET', '/api/v1/workflow-templates', () => json(templates)),
+        on('POST', '/api/v1/workflow-templates/invoice-approval/instantiate', async (r) => {
+          body = await r.json();
+          return json({ workflowId: 'wf-9', version: { id: 'v-9', versionNumber: 1, status: 'Draft', definitionHash: 'h', createdAt: '2026-11-20T00:00:00Z', publishedAt: null, acknowledgedAttestations: null }, definitionJson: '{}', warnings: [] }, 201);
+        }),
+        on('GET', '/api/v1/workflows/wf-9', () => json({ workflow: { id: 'wf-9', name: 'Supplier invoices', description: null, latestVersion: 1, createdAt: '2026-11-20T00:00:00Z', publishedVersionId: null, publishedVersionNumber: null }, versions: [] })),
+      ],
+    });
+
+    const use = await screen.findByRole('button', { name: 'Use template Invoice approval' });
+    expect(use).toBeDisabled(); // a name is required first
+    await user.type(screen.getByLabelText(/Workflow name/), 'Supplier invoices');
+    await user.click(use);
+    await waitFor(() => expect(app.router.state.location.pathname).toBe('/workflows/wf-9'));
+    expect(body).toEqual({ name: 'Supplier invoices' });
   });
 });
 

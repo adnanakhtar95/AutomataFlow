@@ -1603,6 +1603,160 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflow-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["WorkflowTemplateSummary"][];
+                        "application/json": components["schemas"]["WorkflowTemplateSummary"][];
+                        "text/json": components["schemas"]["WorkflowTemplateSummary"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflow-templates/{templateId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    templateId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["WorkflowTemplateDetail"];
+                        "application/json": components["schemas"]["WorkflowTemplateDetail"];
+                        "text/json": components["schemas"]["WorkflowTemplateDetail"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ProblemDetails"];
+                        "application/json": components["schemas"]["ProblemDetails"];
+                        "text/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflow-templates/{templateId}/instantiate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    templateId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["InstantiateTemplateRequest"];
+                    "text/json": components["schemas"]["InstantiateTemplateRequest"];
+                    "application/*+json": components["schemas"]["InstantiateTemplateRequest"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["VersionDetail"];
+                        "application/json": components["schemas"]["VersionDetail"];
+                        "text/json": components["schemas"]["VersionDetail"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ProblemDetails"];
+                        "application/json": components["schemas"]["ProblemDetails"];
+                        "text/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ProblemDetails"];
+                        "application/json": components["schemas"]["ProblemDetails"];
+                        "text/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflows": {
         parameters: {
             query?: never;
@@ -2582,6 +2736,9 @@ export interface components {
             /** Format: int32 */
             unfencedAttempts: number;
         };
+        InstantiateTemplateRequest: {
+            name: string;
+        };
         InvitationCreated: {
             /** Format: uuid */
             id: string;
@@ -2899,6 +3056,18 @@ export interface components {
             publishedVersionId?: string | null;
             /** Format: int32 */
             publishedVersionNumber?: number | null;
+        };
+        WorkflowTemplateDetail: {
+            template: components["schemas"]["WorkflowTemplateSummary"];
+            definitionJson: string;
+            sampleCsv: string;
+        };
+        WorkflowTemplateSummary: {
+            id: string;
+            title: string;
+            category: string;
+            summary: string;
+            setup: string;
         };
         /** @enum {string} */
         WorkflowVersionStatus: "Draft" | "Published" | "Archived";

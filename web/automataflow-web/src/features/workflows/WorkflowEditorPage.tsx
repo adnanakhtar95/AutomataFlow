@@ -6,6 +6,7 @@ import { useApp } from '../../app/AppContext';
 import { Button, Card, ErrorState, Field, PageHeader, Spinner, inputClass } from '../../components/ui';
 import { parseDefinition, starterDefinition, type WorkflowDefinitionJson } from './definition';
 import { DefinitionForm } from './editor/DefinitionForm';
+import { TemplatePicker } from './TemplatePicker';
 
 type Tab = 'form' | 'json';
 
@@ -148,6 +149,11 @@ export function WorkflowEditorPage() {
             </Field>
           </div>
         </Card>
+      )}
+      {isNew && (
+        <div className="mb-6">
+          <TemplatePicker name={name} />
+        </div>
       )}
       <div className="mb-4 space-y-3">
         {validate.data && <ValidationResult result={validate.data} />}

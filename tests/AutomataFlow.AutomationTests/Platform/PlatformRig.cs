@@ -192,6 +192,26 @@ internal sealed class PlatformRig : IAsyncDisposable
         return created.Value!.Version.Id;
     }
 
+    /// <summary>Publishes a workflow package and stores its secret (Phase 9 packages use their own parameter and secret names).</summary>
+    public async Task<Guid> PublishPackageAsync(string definition, string secretName, string name)
+    {
+        var created = await AsOwnerAsync<WorkflowService, ServiceResult<VersionDetail>>(w => w.CreateAsync(name + "-" + Guid.NewGuid().ToString("N")[..6], null, definition, default));
+        Assert.True(created.Status == ServiceStatus.Ok, string.Join("; ", created.Errors.Select(e => e.Path + " " + e.Code)));
+        var published = await AsOwnerAsync<WorkflowService, ServiceResult<VersionSummary>>(w => w.PublishAsync(created.Value!.WorkflowId, created.Value.Version.Id, true, default));
+        Assert.Equal(ServiceStatus.Ok, published.Status);
+        await AsOwnerAsync<SecretService, bool>(s => s.SetAsync(ActingOrganization, secretName, "DemoPass-2026!", default));
+        return created.Value!.Version.Id;
+    }
+
+    public async Task<Guid> CreateJobAsync(Guid version, string csv, Dictionary<string, string> parameters, JobOptions options)
+    {
+        await using var content = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+        var created = await AsOwnerAsync<JobService, ServiceResult<JobCreated>>(j =>
+            j.CreateAsync(new CreateJobCommand(version, parameters, options, null, content, "records.csv", ImportFormat.Csv), default));
+        Assert.True(created.Status == ServiceStatus.Ok, string.Join("; ", created.Errors.Select(e => e.Path + " " + e.Code)));
+        return created.Value!.JobId;
+    }
+
     public async Task<Guid> CreateJobAsync(Guid version, string csv, JobOptions? options = null)
     {
         await using var content = new MemoryStream(Encoding.UTF8.GetBytes(csv));

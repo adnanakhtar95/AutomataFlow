@@ -116,6 +116,15 @@ public sealed partial class DemoCrmProcess(string bindAddress = "127.0.0.1", str
         return state.GetProperty("registrationSubmissions").GetInt32();
     }
 
+    /// <summary>A named counter of /demo/state (e.g. orderCount, orderSubmissions, approvalCount, approvalSubmissions).</summary>
+    public async Task<int> StateAsync(string property)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}/demo/state");
+        request.Headers.Add("X-Demo-Control-Token", ControlToken);
+        var state = await (await _http.SendAsync(request)).Content.ReadFromJsonAsync<JsonElement>();
+        return state.GetProperty(property).GetInt32();
+    }
+
     public async Task<int> CustomerCountAsync()
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}/demo/state");

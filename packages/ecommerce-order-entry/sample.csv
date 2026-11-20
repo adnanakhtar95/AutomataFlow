@@ -1,0 +1,8 @@
+customerEmail,sku,quantity,shipping,purchaseOrder
+alice.morgan@example.test,WIDGET-S,2,Standard,PO-2026-001
+brian.fletcher@example.test,WIDGET-L,1,Express,PO-2026-002
+alice.morgan@example.test,GADGET-X,2,Standard,PO-2026-003
+brian.fletcher@example.test,GADGET-X,5,Standard,PO-2026-004
+nobody@example.test,WIDGET-S,1,Standard,PO-2026-005
+alice.morgan@example.test,WIDGET-S,3,Standard,PO-2026-006+fail-2
+brian.fletcher@example.test,WIDGET-L,2,Express,PO-2026-007+commit-fail
