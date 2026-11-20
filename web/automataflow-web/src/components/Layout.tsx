@@ -8,6 +8,7 @@ interface NavItem {
   label: string;
   minimum: Role;
   end?: boolean;
+  platformOnly?: boolean;
 }
 
 const navigation: NavItem[] = [
@@ -16,6 +17,9 @@ const navigation: NavItem[] = [
   { to: '/jobs', label: 'Jobs', minimum: 'Viewer' },
   { to: '/jobs/new', label: 'New job', minimum: 'Operator', end: true },
   { to: '/settings/secrets', label: 'Secrets', minimum: 'Admin' },
+  { to: '/settings/members', label: 'Members', minimum: 'Viewer' },
+  { to: '/settings/workspace', label: 'Workspace', minimum: 'Viewer' },
+  { to: '/platform/workspaces', label: 'Platform', minimum: 'Viewer', platformOnly: true },
 ];
 
 export interface Crumb {
@@ -62,8 +66,10 @@ function Breadcrumbs() {
 }
 
 function UserMenu() {
-  const { profile, signOut } = useApp();
+  const { profile, signOut, switchWorkspace } = useApp();
   const [open, setOpen] = useState(false);
+  const [switchError, setSwitchError] = useState<string | null>(null);
+  const others = (profile?.memberships ?? []).filter((m) => m.organizationId !== profile?.organizationId);
 
   return (
     <div className="relative">
@@ -87,6 +93,26 @@ function UserMenu() {
               {profile?.role} in {profile?.organizationName}
             </p>
           </div>
+          {others.length > 0 && (
+            <div className="border-b border-slate-100 py-1">
+              <p className="px-2 pt-1 text-xs uppercase tracking-wide text-slate-400">Switch workspace</p>
+              {others.map((m) => (
+                <button
+                  key={m.organizationId}
+                  type="button"
+                  role="menuitem"
+                  className="w-full rounded px-2 py-1.5 text-left text-slate-700 hover:bg-slate-100"
+                  onClick={() => {
+                    setSwitchError(null);
+                    switchWorkspace(m.organizationId).then(() => setOpen(false)).catch((e: unknown) => setSwitchError(e instanceof Error ? e.message : 'Switching failed.'));
+                  }}
+                >
+                  {m.organizationName} <span className="text-xs text-slate-400">{m.role}</span>
+                </button>
+              ))}
+              {switchError && <p className="px-2 text-xs text-rose-700">{switchError}</p>}
+            </div>
+          )}
           <button type="button" role="menuitem" className="mt-1 w-full rounded px-2 py-1.5 text-left text-slate-700 hover:bg-slate-100" onClick={() => void signOut()}>
             Sign out
           </button>
@@ -99,7 +125,7 @@ function UserMenu() {
 export function Layout() {
   const { profile, can } = useApp();
   const [menuOpen, setMenuOpen] = useState(false);
-  const items = navigation.filter((n) => can(n.minimum));
+  const items = navigation.filter((n) => can(n.minimum) && (!n.platformOnly || profile?.isPlatformOperator === true));
 
   const nav = (
     <nav aria-label="Main" className="space-y-1">

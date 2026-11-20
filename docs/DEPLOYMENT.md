@@ -51,9 +51,18 @@ docker compose --env-file deploy/.env.prod -f deploy/docker-compose.prod.yml up 
 `up` runs, in order: `postgres` (its first start creates the roles and the empty database), `migrate` (applies the
 schema as `automataflow_owner`), then `api` and `worker` (as `automataflow_app`) and `web`.
 
-The first workspace and its Owner: until platform onboarding (Phase 8) is in place, enable registration for the first
-sign-up only (`AF_ALLOW_REGISTRATION=true`, validate with `-AllowRegistration`), register, then set it back to `false`
-and redeploy.
+**Onboarding (Phase 8, ADR-080).** Create the first platform operator once, with credentials from the environment
+(never arguments), then onboard every customer from the dashboard's Platform page:
+```powershell
+$env:AF_BOOTSTRAP_EMAIL = 'ops@your-company.example'
+$env:AF_BOOTSTRAP_PASSWORD = '<a long unique password>'   # type it; do not keep it in shell history files
+docker compose --env-file deploy/.env.prod -f deploy/docker-compose.prod.yml run --rm --no-deps `
+  -e AF_BOOTSTRAP_EMAIL -e AF_BOOTSTRAP_PASSWORD api bootstrap-operator
+Remove-Item Env:AF_BOOTSTRAP_PASSWORD
+```
+The operator signs in, opens **Platform**, creates a workspace with its Owner's e-mail address and sends the one-time
+invitation link to the Owner (the platform sends no e-mail). The Owner invites their team from **Members**. Self-service
+registration stays off (`AF_ALLOW_REGISTRATION=false`).
 
 ## 4. TLS and the network edge
 - The gateway (`web`) speaks plain HTTP on `AF_HTTP_BIND:AF_HTTP_PORT` (default `127.0.0.1:8080`). Put a TLS terminator in

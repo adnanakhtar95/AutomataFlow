@@ -13,6 +13,9 @@ public sealed record RegisterRequest([Required, EmailAddress, MaxLength(254)] st
 public sealed record LoginRequest([Required, MaxLength(254)] string Email, [Required, MaxLength(128)] string Password, Guid? OrganizationId);
 
 /// <param name="RefreshToken">Required for API clients. Browser sessions (ADR-077) send no body value: the token comes from the HttpOnly cookie.</param>
+/// <param name="RefreshToken">API clients: the current refresh token, revoked after the switch. Browsers: omitted (the cookie is used).</param>
+public sealed record SwitchRequest(Guid OrganizationId, [MaxLength(100)] string? RefreshToken);
+
 public sealed record RefreshRequest([MaxLength(100)] string? RefreshToken);
 
 /// <param name="RefreshToken">Null for browser sessions (ADR-077): the token is set only as an HttpOnly cookie.</param>
@@ -30,10 +33,10 @@ public sealed record MeResponse(Guid UserId, string Email, Guid OrganizationId, 
 /// </summary>
 [ApiController]
 [Route("api/v1/auth")]
-[EnableRateLimiting(RateLimits.Authentication)]
 public sealed class AuthController(AccountService accounts, TokenIssuer tokens) : ControllerBase
 {
     [HttpPost("register")]
+    [EnableRateLimiting(RateLimits.Authentication)]
     [ProducesResponseType<TokenResponse>(StatusCodes.Status201Created)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
@@ -42,6 +45,7 @@ public sealed class AuthController(AccountService accounts, TokenIssuer tokens) 
         Map(await accounts.RegisterAsync(request.Email, request.Password, request.OrganizationName, request.OrganizationSlug, cancellationToken), StatusCodes.Status201Created);
 
     [HttpPost("login")]
+    [EnableRateLimiting(RateLimits.Authentication)]
     [ProducesResponseType<TokenResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status423Locked)]
@@ -49,6 +53,7 @@ public sealed class AuthController(AccountService accounts, TokenIssuer tokens) 
         Map(await accounts.LoginAsync(request.Email, request.Password, request.OrganizationId, cancellationToken), StatusCodes.Status200OK);
 
     [HttpPost("refresh")]
+    [EnableRateLimiting(RateLimits.Session)]
     [ProducesResponseType<TokenResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
@@ -63,6 +68,7 @@ public sealed class AuthController(AccountService accounts, TokenIssuer tokens) 
     }
 
     [HttpPost("logout")]
+    [EnableRateLimiting(RateLimits.Session)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<IActionResult> Logout([FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] RefreshRequest? request, CancellationToken cancellationToken)
     {
@@ -90,21 +96,31 @@ public sealed class AuthController(AccountService accounts, TokenIssuer tokens) 
         return BrowserSession.IsRequested(Request) ? BrowserSession.Read(Request) : null;
     }
 
+    /// <summary>Signs in to another workspace of the same user (a new session; the previous refresh token is revoked).</summary>
+    [HttpPost("switch")]
+    [EnableRateLimiting(RateLimits.Session)]
+    [Authorize(Policy = Policies.Viewer)]
+    [ProducesResponseType<TokenResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> Switch(SwitchRequest request, [FromServices] ICurrentUser current, CancellationToken cancellationToken)
+    {
+        var result = await accounts.SwitchAsync(current.UserId, request.OrganizationId, cancellationToken);
+        if (result.Status == AccountStatus.Ok && PresentedToken(new RefreshRequest(request.RefreshToken)) is { } previous)
+        {
+            await accounts.LogoutAsync(previous, cancellationToken);
+        }
+
+        return Map(result, StatusCodes.Status200OK);
+    }
+
     private ObjectResult Map(AccountResult result, int successStatus)
     {
         var browser = BrowserSession.IsRequested(Request);
         Response.Headers.CacheControl = "no-store";
         if (result is { Status: AccountStatus.Ok, Session: { } s })
         {
-            var (access, expires) = tokens.Issue(s.UserId, s.OrganizationId);
-            string? bodyToken = s.RefreshToken;
-            if (browser)
-            {
-                BrowserSession.Write(Response, s.RefreshToken, s.RefreshExpiresAt);
-                bodyToken = null;
-            }
-
-            return StatusCode(successStatus, new TokenResponse(access, expires, bodyToken, s.RefreshExpiresAt, s.OrganizationId, s.Role.ToString()));
+            return StatusCode(successStatus, SessionResponses.Create(Request, Response, tokens, s));
         }
 
         if (browser && result.Status is AccountStatus.InvalidToken or AccountStatus.NotAMember)
@@ -119,8 +135,31 @@ public sealed class AuthController(AccountService accounts, TokenIssuer tokens) 
             AccountStatus.Conflict => Problem(statusCode: StatusCodes.Status409Conflict, title: "The account or organization already exists."),
             AccountStatus.RegistrationDisabled => Problem(statusCode: StatusCodes.Status403Forbidden, title: "Registration is disabled."),
             AccountStatus.LockedOut => Problem(statusCode: StatusCodes.Status423Locked, title: "The account is temporarily locked."),
+            AccountStatus.Suspended => Problem(statusCode: StatusCodes.Status403Forbidden, title: "The workspace is suspended."),
             _ => Problem(statusCode: StatusCodes.Status401Unauthorized, title: "Authentication failed."),
         };
+    }
+}
+
+/// <summary>Turns an authenticated session into a token response, honouring the browser-session transport (ADR-077).</summary>
+public static class SessionResponses
+{
+    public static TokenResponse Create(HttpRequest request, HttpResponse response, TokenIssuer tokens, AccountSession session)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(response);
+        ArgumentNullException.ThrowIfNull(tokens);
+        ArgumentNullException.ThrowIfNull(session);
+        response.Headers.CacheControl = "no-store";
+        var (access, expires) = tokens.Issue(session.UserId, session.OrganizationId);
+        string? bodyToken = session.RefreshToken;
+        if (BrowserSession.IsRequested(request))
+        {
+            BrowserSession.Write(response, session.RefreshToken, session.RefreshExpiresAt);
+            bodyToken = null;
+        }
+
+        return new TokenResponse(access, expires, bodyToken, session.RefreshExpiresAt, session.OrganizationId, session.Role.ToString());
     }
 }
 

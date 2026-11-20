@@ -21,6 +21,40 @@ public sealed partial class Organization
 
     public DateTimeOffset CreatedAt { get; private set; }
 
+    /// <summary>Suspended workspaces cannot sign in or run jobs; their data is kept (Phase 8).</summary>
+    public OrganizationStatus Status { get; private set; } = OrganizationStatus.Active;
+
+    public DateTimeOffset? SuspendedAt { get; private set; }
+
+    public void Rename(string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        var trimmed = name.Trim();
+        if (trimmed.Length > NameMaxLength)
+        {
+            throw new ArgumentException($"Organization name cannot exceed {NameMaxLength} characters.", nameof(name));
+        }
+
+        Name = trimmed;
+    }
+
+    public void Suspend(DateTimeOffset at)
+    {
+        if (Status == OrganizationStatus.Suspended)
+        {
+            return;
+        }
+
+        Status = OrganizationStatus.Suspended;
+        SuspendedAt = at;
+    }
+
+    public void Reactivate()
+    {
+        Status = OrganizationStatus.Active;
+        SuspendedAt = null;
+    }
+
     public static Organization Create(string name, string slug, DateTimeOffset createdAt)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
@@ -51,4 +85,10 @@ public sealed partial class Organization
 
     [GeneratedRegex("^[a-z0-9]+(-[a-z0-9]+)*$")]
     private static partial Regex SlugPattern();
+}
+
+public enum OrganizationStatus
+{
+    Active,
+    Suspended,
 }

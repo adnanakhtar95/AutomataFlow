@@ -34,6 +34,8 @@ public sealed class RecordDispatcher(NpgsqlDataSource source)
                    j."Options_MaxConcurrency" - (SELECT count(*) FROM "JobRecords" x WHERE x."OrganizationId" = j."OrganizationId" AND x."JobId" = j."Id" AND x."Status" = 'Running')
             FROM "Jobs" j
             WHERE j."Status" IN ('Pending', 'Running')
+              -- Suspended workspaces (Phase 8) are not claimed; attempts already running finish normally.
+              AND EXISTS (SELECT 1 FROM "Organizations" o WHERE o."Id" = j."OrganizationId" AND o."Status" = 'Active')
               AND EXISTS (SELECT 1 FROM "JobRecords" r WHERE r."OrganizationId" = j."OrganizationId" AND r."JobId" = j."Id"
                           AND r."Status" IN ('Pending', 'AwaitingFence') AND r."NextAttemptAt" <= now())
             ORDER BY j."CreatedAt"

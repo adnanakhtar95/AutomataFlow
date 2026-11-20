@@ -11,7 +11,7 @@ Status: Draft v0.2. Estimates are indicative planning aids, not deadlines; quali
 | 5 | Background workers and job orchestration (execution platform) | 3 (indicative; far larger in practice) | done (2026-11-19, `d247a51`) |
 | 6 | Customer management dashboard (docs/PHASE6_PLAN.md) | 3+ | done (2026-11-20) |
 | 7 | Production infrastructure and security (docs/PHASE7_PLAN.md) | 3+ | done (2026-11-20) |
-| 8 | Customer onboarding and workspace management (docs/PHASE8_PLAN.md) | 3+ | authorized 2026-11-20 |
+| 8 | Customer onboarding and workspace management (docs/PHASE8_PLAN.md) | 3+ | done (2026-11-20) |
 | 9 | Commercial automation capabilities (docs/PHASE9_PLAN.md) | 3+ | authorized 2026-11-20 |
 | 10 | Commercial readiness and release (docs/PHASE10_PLAN.md) | 2+ | authorized 2026-11-20 |
 

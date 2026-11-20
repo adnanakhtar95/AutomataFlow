@@ -65,6 +65,12 @@ const statusColors: Record<string, string> = {
   Cancelled: 'bg-slate-200 text-slate-600',
   Archived: 'bg-slate-200 text-slate-600',
   Abandoned: 'bg-slate-200 text-slate-600',
+  Active: 'bg-emerald-100 text-emerald-800',
+  Suspended: 'bg-rose-100 text-rose-800',
+  Open: 'bg-sky-100 text-sky-800',
+  Accepted: 'bg-emerald-100 text-emerald-800',
+  Expired: 'bg-slate-200 text-slate-600',
+  Revoked: 'bg-slate-200 text-slate-600',
 };
 
 export function StatusBadge({ status }: { status: string }) {
@@ -87,7 +93,9 @@ export function Spinner({ label = 'Loading…' }: { label?: string }) {
 /** Shows an error as text (never HTML). Validation errors list their path and message. */
 export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
   const apiError = error instanceof ApiError ? error : null;
-  const title = apiError?.isNotFound ? 'Not found, or not in this workspace.' : apiError?.title ?? 'Something went wrong.';
+  // The Api's generic 404 hides whether a resource exists in another workspace; say so. Specific 404 titles are shown as-is.
+  const genericNotFound = apiError?.isNotFound && /^not found\.?$/i.test(apiError.title);
+  const title = genericNotFound ? 'Not found, or not in this workspace.' : apiError?.title ?? 'Something went wrong.';
   return (
     <div role="alert" className="rounded-md bg-rose-50 p-4 text-sm text-rose-800 ring-1 ring-rose-200">
       <p className="font-medium">{title}</p>

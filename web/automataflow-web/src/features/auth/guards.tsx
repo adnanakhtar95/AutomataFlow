@@ -31,6 +31,16 @@ export function RequireRole({ minimum, children }: { minimum: Role; children: Re
   return can(minimum) ? <>{children}</> : <Forbidden />;
 }
 
+/** Platform-operator pages; workspace users (whatever their role) see "no access". The Api enforces the same rule. */
+export function RequirePlatformOperator({ children }: { children: ReactNode }) {
+  const { profile } = useApp();
+  if (!profile) {
+    return <Spinner />;
+  }
+
+  return profile.isPlatformOperator ? <>{children}</> : <Forbidden />;
+}
+
 export function Forbidden() {
   return (
     <div className="py-12 text-center">

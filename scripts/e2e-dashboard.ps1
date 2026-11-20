@@ -35,6 +35,8 @@ $env:AF_E2E_DEMOCRM_IMAGE = "automataflow-democrm-fixture:$tag"
 $env:AF_E2E_DB_PASSWORD = New-Secret 24
 $env:AF_E2E_JWT_KEY = New-Secret 48
 $env:AF_E2E_DEMOCRM_TOKEN = New-Secret 24
+$env:AF_E2E_OPERATOR_EMAIL = 'operator@platform.example.test'
+$env:AF_E2E_OPERATOR_PASSWORD = 'Op-' + (New-Secret 18)
 
 $ErrorActionPreference = 'Continue'
 if (-not $SkipBuild) {
@@ -49,11 +51,15 @@ try {
     docker compose -f $compose up -d --wait --wait-timeout 300
     if ($LASTEXITCODE -ne 0) { throw 'the e2e stack did not become healthy' }
 
-    $runner = 'set -e; mkdir -p /tmp/web && cd /repo/web/automataflow-web && tar cf - --exclude=node_modules --exclude=dist --exclude=test-results --exclude=playwright-report . | tar xf - -C /tmp/web && cd /tmp/web && npm ci --no-audit --no-fund --loglevel=error && npx playwright test; status=$?; cp -r playwright-report test-results /out/ 2>/dev/null || true; exit $status'
+    # Phase 8: the first platform operator, created by the Api's bootstrap command (credentials via environment only).
+    docker compose -f $compose run --rm --no-deps -e AF_BOOTSTRAP_PASSWORD=$env:AF_E2E_OPERATOR_PASSWORD -e AF_BOOTSTRAP_EMAIL=$env:AF_E2E_OPERATOR_EMAIL api bootstrap-operator
+    if ($LASTEXITCODE -ne 0) { throw 'bootstrap-operator failed' }
+
+    $runner = 'set -e; mkdir -p /tmp/web && cd /repo/web/automataflow-web && tar cf - --exclude=node_modules --exclude=dist --exclude=test-results --exclude=playwright-report . | tar xf - -C /tmp/web && cd /tmp/web && npm ci --no-audit --no-fund --loglevel=error && status=0 && { npx playwright test || status=$?; }; cp -r playwright-report test-results /out/ 2>/dev/null || true; exit $status'
     $out = Join-Path $root 'web/automataflow-web/.e2e-output'
     New-Item -ItemType Directory -Force $out | Out-Null
     docker run --rm --network container:af-e2e-web-1 --ipc=host `
-        -e AF_E2E_REPO=/repo -e AF_E2E_BASE_URL=http://localhost:8080 -e CI=1 `
+        -e AF_E2E_REPO=/repo -e AF_E2E_BASE_URL=http://localhost:8080 -e CI=1 -e AF_E2E_OPERATOR_EMAIL -e AF_E2E_OPERATOR_PASSWORD `
         -v "${root}:/repo:ro" -v "${out}:/out" `
         "mcr.microsoft.com/playwright:v$playwright-noble" bash -c $runner
     $exitCode = $LASTEXITCODE

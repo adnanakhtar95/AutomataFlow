@@ -19,6 +19,10 @@ interface AppContextValue {
   profile: Profile | undefined;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  /** Signs in to another workspace of the same user (a new session, ADR-077 cookie transport). */
+  switchWorkspace: (organizationId: string) => Promise<void>;
+  /** Starts a session from a token response obtained elsewhere (accepting an invitation). */
+  startSession: (response: Schemas['TokenResponse']) => void;
   can: (minimum: Role) => boolean;
 }
 
@@ -82,6 +86,24 @@ export function AppProvider({ session, children }: { session: Session; children:
       session.start(body as Schemas['TokenResponse']);
     },
     signOut: () => session.signOut(),
+    switchWorkspace: async (organizationId) => {
+      const response = await authFetch('/api/v1/auth/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...SessionHeader },
+        body: JSON.stringify({ organizationId }),
+      });
+      const body: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw toApiError(response.status, body);
+      }
+
+      queries.clear(); // nothing of the previous workspace stays cached
+      session.start(body as Schemas['TokenResponse']);
+    },
+    startSession: (response) => {
+      setEndReason(null);
+      session.start(response);
+    },
     can: (minimum) => atLeast(profile.data?.role ?? tokens?.role, minimum),
   };
 

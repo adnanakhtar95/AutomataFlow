@@ -28,6 +28,9 @@ public enum AccountStatus
     Conflict,
     Invalid,
     RegistrationDisabled,
+
+    /// <summary>The workspace is suspended by a platform operator (Phase 8).</summary>
+    Suspended,
 }
 
 /// <summary>An authenticated session: who, which organization, which role, and the plaintext refresh token (returned once).</summary>
@@ -39,6 +42,9 @@ public sealed record MembershipView(Guid OrganizationId, string OrganizationName
 /// <summary>The signed-in user as the dashboard shows them: identity, active workspace and every membership.</summary>
 public sealed record UserProfile(Guid UserId, string Email, Guid OrganizationId, string OrganizationName, string OrganizationSlug, OrganizationRole Role,
     bool IsPlatformOperator, IReadOnlyList<MembershipView> Memberships);
+
+/// <summary>A user's access to one workspace: the role (null = not a member) and whether the workspace is suspended.</summary>
+public sealed record WorkspaceAccess(OrganizationRole? Role, bool Suspended);
 
 public sealed record AccountResult(AccountStatus Status, AccountSession? Session = null, IReadOnlyList<string>? Errors = null)
 {
@@ -130,10 +136,18 @@ public sealed class AccountService(
 
         await users.ResetAccessFailedCountAsync(user);
         var memberships = await MembershipsAsync(user.Id, cancellationToken);
-        var membership = organizationId is { } requested ? memberships.FirstOrDefault(m => m.OrganizationId == requested) : memberships.FirstOrDefault();
+        var suspended = await SuspendedOrganizationsAsync(memberships.Select(m => m.OrganizationId), cancellationToken);
+        var membership = organizationId is { } requested
+            ? memberships.FirstOrDefault(m => m.OrganizationId == requested)
+            : memberships.FirstOrDefault(m => !suspended.Contains(m.OrganizationId)) ?? memberships.FirstOrDefault();
         if (membership is null)
         {
             return AccountResult.Fail(AccountStatus.NotAMember);
+        }
+
+        if (suspended.Contains(membership.OrganizationId))
+        {
+            return AccountResult.Fail(AccountStatus.Suspended);
         }
 
         var session = await IssueAsync(user.Id, membership.OrganizationId, membership.Role, Guid.CreateVersion7(), cancellationToken);
@@ -169,6 +183,11 @@ public sealed class AccountService(
         {
             await RevokeFamilyAsync(stored.FamilyId, now, cancellationToken);
             return AccountResult.Fail(role is null ? AccountStatus.NotAMember : AccountStatus.InvalidToken);
+        }
+
+        if ((await SuspendedOrganizationsAsync([stored.ActiveOrganizationId], cancellationToken)).Count > 0)
+        {
+            return AccountResult.Fail(AccountStatus.Suspended);
         }
 
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -232,6 +251,93 @@ public sealed class AccountService(
             await users.IsInRoleAsync(user, PlatformOperatorRole), views);
     }
 
+    /// <summary>The caller's role in an ACTIVE workspace: null when not a member; <see cref="WorkspaceAccess.Suspended"/> when suspended.</summary>
+    public async Task<WorkspaceAccess> AccessAsync(Guid userId, Guid organizationId, CancellationToken cancellationToken)
+    {
+        var role = await FindRoleAsync(userId, organizationId, cancellationToken);
+        if (role is null)
+        {
+            return new WorkspaceAccess(null, false);
+        }
+
+        return new WorkspaceAccess(role, (await SuspendedOrganizationsAsync([organizationId], cancellationToken)).Count > 0);
+    }
+
+    /// <summary>A new session for another workspace of the same user (Phase 8 workspace switching).</summary>
+    public async Task<AccountResult> SwitchAsync(Guid userId, Guid organizationId, CancellationToken cancellationToken)
+    {
+        var access = await AccessAsync(userId, organizationId, cancellationToken);
+        if (access.Role is not { } role)
+        {
+            return AccountResult.Fail(AccountStatus.NotAMember);
+        }
+
+        if (access.Suspended)
+        {
+            return AccountResult.Fail(AccountStatus.Suspended);
+        }
+
+        return new AccountResult(AccountStatus.Ok, await IssueAsync(userId, organizationId, role, Guid.CreateVersion7(), cancellationToken));
+    }
+
+    /// <summary>A fresh session after a verified action (e.g. accepting an invitation). The caller has proven the identity.</summary>
+    public async Task<AccountSession> StartSessionAsync(Guid userId, Guid organizationId, OrganizationRole role, CancellationToken cancellationToken) =>
+        await IssueAsync(userId, organizationId, role, Guid.CreateVersion7(), cancellationToken);
+
+    /// <summary>
+    /// Creates the first platform operator with an operations workspace it owns (`bootstrap-operator`). Refuses when the
+    /// e-mail address already exists. Never a default credential: the password is supplied by the operator.
+    /// </summary>
+    public async Task<AccountResult> BootstrapOperatorAsync(string email, string password, string workspaceName, string workspaceSlug, RoleManager<IdentityRole<Guid>> roles, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(roles);
+        if (await users.FindByEmailAsync(email) is not null)
+        {
+            return AccountResult.Fail(AccountStatus.Conflict, "email");
+        }
+
+        var now = clock.GetUtcNow();
+        Organization organization;
+        try
+        {
+            organization = Organization.Create(workspaceName, workspaceSlug, now);
+        }
+        catch (ArgumentException)
+        {
+            return AccountResult.Fail(AccountStatus.Invalid, "workspace");
+        }
+
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        if (!await roles.RoleExistsAsync(PlatformOperatorRole))
+        {
+            await roles.CreateAsync(new IdentityRole<Guid>(PlatformOperatorRole) { Id = Guid.CreateVersion7() });
+        }
+
+        var user = new ApplicationUser { Id = Guid.CreateVersion7(), UserName = email, Email = email, CreatedAt = now };
+        var created = await users.CreateAsync(user, password);
+        if (!created.Succeeded)
+        {
+            return AccountResult.Fail(AccountStatus.Invalid, [.. created.Errors.Select(e => e.Code)]);
+        }
+
+        await users.AddToRoleAsync(user, PlatformOperatorRole);
+        tenant.Enter(organization.Id);
+        db.Organizations.Add(organization);
+        db.OrganizationMembers.Add(OrganizationMember.Create(organization.Id, user.Id, OrganizationRole.Owner, now));
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+        {
+            return AccountResult.Fail(AccountStatus.Conflict, "workspace-slug");
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        logger.LogInformation("Platform operator bootstrapped {UserId} {OrganizationId}", user.Id, organization.Id);
+        return new AccountResult(AccountStatus.Ok, new AccountSession(user.Id, organization.Id, OrganizationRole.Owner, string.Empty, now));
+    }
+
     public async Task<bool> IsPlatformOperatorAsync(Guid userId)
     {
         var user = await users.FindByIdAsync(userId.ToString());
@@ -263,6 +369,12 @@ public sealed class AccountService(
         db.Set<RefreshToken>().Add(token);
         await db.SaveChangesAsync(cancellationToken);
         return new AccountSession(userId, organizationId, role, value, token.ExpiresAt);
+    }
+
+    private async Task<HashSet<Guid>> SuspendedOrganizationsAsync(IEnumerable<Guid> organizationIds, CancellationToken cancellationToken)
+    {
+        var ids = organizationIds.Distinct().ToList();
+        return [.. await db.Organizations.AsNoTracking().Where(o => ids.Contains(o.Id) && o.Status == OrganizationStatus.Suspended).Select(o => o.Id).ToListAsync(cancellationToken)];
     }
 
     private Task<int> RevokeFamilyAsync(Guid family, DateTimeOffset now, CancellationToken cancellationToken) =>

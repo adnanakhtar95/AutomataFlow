@@ -11,7 +11,11 @@ namespace AutomataFlow.Api.Auth;
 
 public static class RateLimits
 {
+    /// <summary>Credential endpoints (password sign-in, registration, invitations): strict, per client address.</summary>
     public const string Authentication = "auth";
+
+    /// <summary>Token-protected session endpoints (refresh, logout, switch): a 256-bit token cannot be guessed, so the limit only bounds abuse.</summary>
+    public const string Session = "session";
 }
 
 public static class AuthSetup
@@ -56,12 +60,16 @@ public static class AuthSetup
             .AddPolicy(Policies.PlatformOperator, p => p.RequireAuthenticatedUser().AddRequirements(new PlatformOperatorRequirement()));
 
         var permitPerMinute = configuration.GetValue("Auth:PermitsPerMinute", 20);
+        var sessionPermitsPerMinute = configuration.GetValue("Auth:SessionPermitsPerMinute", 120);
         services.AddRateLimiter(o =>
         {
             o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
             o.AddPolicy(RateLimits.Authentication, context => RateLimitPartition.GetFixedWindowLimiter(
                 context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
                 _ => new FixedWindowRateLimiterOptions { PermitLimit = permitPerMinute, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+            o.AddPolicy(RateLimits.Session, context => RateLimitPartition.GetFixedWindowLimiter(
+                context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                _ => new FixedWindowRateLimiterOptions { PermitLimit = sessionPermitsPerMinute, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
         });
         return services;
     }

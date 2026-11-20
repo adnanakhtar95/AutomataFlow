@@ -69,6 +69,9 @@ public static class DependencyInjection
         services.AddScoped<Jobs.JobService>();
         services.AddScoped<Jobs.ExecutionQueryService>();
         services.AddScoped<Jobs.OverviewService>();
+        services.AddScoped<Organizations.WorkspaceService>();
+        services.AddScoped<Organizations.InvitationService>();
+        services.AddScoped<Organizations.PlatformWorkspaceService>();
         return services;
     }
 

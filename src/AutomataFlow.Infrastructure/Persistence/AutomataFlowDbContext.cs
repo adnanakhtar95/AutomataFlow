@@ -47,6 +47,8 @@ public sealed class AutomataFlowDbContext : IdentityDbContext<ApplicationUser, I
 
     public DbSet<OrganizationSecret> OrganizationSecrets => Set<OrganizationSecret>();
 
+    public DbSet<OrganizationInvitation> OrganizationInvitations => Set<OrganizationInvitation>();
+
     public DbSet<Integration> Integrations => Set<Integration>();
 
     public DbSet<Workflow> Workflows => Set<Workflow>();

@@ -14,5 +14,6 @@ internal sealed class OrganizationConfiguration : IEntityTypeConfiguration<Organ
         builder.Property(o => o.Name).HasMaxLength(Organization.NameMaxLength).IsRequired();
         builder.Property(o => o.Slug).HasMaxLength(Organization.SlugMaxLength).IsRequired();
         builder.HasIndex(o => o.Slug).IsUnique();
+        builder.Property(o => o.Status).HasConversion<string>().HasMaxLength(16).HasDefaultValue(OrganizationStatus.Active).IsRequired();
     }
 }

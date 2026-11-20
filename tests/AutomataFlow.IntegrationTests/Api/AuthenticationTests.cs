@@ -172,6 +172,32 @@ public sealed class AuthenticationConfigurationTests
     }
 
     [Fact]
+    public async Task Session_refreshes_have_their_own_limit_and_never_exhaust_password_sign_in()
+    {
+        var api = new PlatformApi { Settings = new Dictionary<string, string?> { ["Auth:PermitsPerMinute"] = "3", ["Auth:SessionPermitsPerMinute"] = "50" } };
+        await api.InitializeAsync();
+        try
+        {
+            var (email, tokens) = await api.RegisterAsync(); // 1 credential permit
+            var refreshToken = tokens.RefreshToken;
+            for (var i = 0; i < 10; i++) // e.g. several tabs reloading: far above the credential limit
+            {
+                var refreshed = await api.Client().PostAsJsonAsync("/api/v1/auth/refresh", new { refreshToken });
+                Assert.Equal(HttpStatusCode.OK, refreshed.StatusCode);
+                refreshToken = (await refreshed.Content.ReadFromJsonAsync<TokenDto>())!.RefreshToken;
+            }
+
+            Assert.Equal(HttpStatusCode.OK, (await api.Client().PostAsJsonAsync("/api/v1/auth/login", new { email, password = PlatformApi.Password })).StatusCode);
+            Assert.Equal(HttpStatusCode.Unauthorized, (await api.Client().PostAsJsonAsync("/api/v1/auth/login", new { email, password = "wrong-password-123" })).StatusCode);
+            Assert.Equal(HttpStatusCode.TooManyRequests, (await api.Client().PostAsJsonAsync("/api/v1/auth/login", new { email, password = PlatformApi.Password })).StatusCode);
+        }
+        finally
+        {
+            await api.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task The_Api_refuses_to_start_with_a_weak_signing_key()
     {
         var api = new PlatformApi { Settings = new Dictionary<string, string?> { ["Auth:Jwt:SigningKey"] = "too-short" } };

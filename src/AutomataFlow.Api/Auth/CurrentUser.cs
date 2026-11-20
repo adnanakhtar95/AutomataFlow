@@ -54,14 +54,21 @@ public sealed class MembershipVerificationMiddleware(RequestDelegate next)
                 return;
             }
 
-            var role = await accounts.FindRoleAsync(userId, organizationId, context.RequestAborted);
-            if (role is null)
+            var access = await accounts.AccessAsync(userId, organizationId, context.RequestAborted);
+            if (access.Role is not { } role)
             {
                 await Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "Not a member of this organization.").ExecuteAsync(context);
                 return;
             }
 
-            current.Set(userId, organizationId, role.Value);
+            // A suspended workspace (Phase 8) can do nothing until a platform operator reactivates it; its data is kept.
+            if (access.Suspended)
+            {
+                await Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "The workspace is suspended.").ExecuteAsync(context);
+                return;
+            }
+
+            current.Set(userId, organizationId, role);
             tenant.Enter(organizationId);
         }
 

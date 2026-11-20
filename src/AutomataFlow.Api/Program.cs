@@ -71,6 +71,33 @@ if (trustedNetworks.Count > 0)
     app.UseForwardedHeaders();
 }
 
+// First platform operator (docs/DEPLOYMENT.md "Onboarding"): credentials from the environment only, never arguments
+// (process lists) and never a default. Creates the operator's own operations workspace. Refuses an existing address.
+if (args is ["bootstrap-operator", ..])
+{
+    var settings = app.Configuration;
+    var email = settings["AF_BOOTSTRAP_EMAIL"];
+    var password = settings["AF_BOOTSTRAP_PASSWORD"];
+    if (string.IsNullOrWhiteSpace(email) || string.IsNullOrEmpty(password))
+    {
+        Log.Error("Set AF_BOOTSTRAP_EMAIL and AF_BOOTSTRAP_PASSWORD (and optionally AF_BOOTSTRAP_WORKSPACE_NAME / AF_BOOTSTRAP_WORKSPACE_SLUG)");
+        return 2;
+    }
+
+    await using var scope = app.Services.CreateAsyncScope();
+    var result = await scope.ServiceProvider.GetRequiredService<AutomataFlow.Infrastructure.Identity.AccountService>().BootstrapOperatorAsync(
+        email, password, settings["AF_BOOTSTRAP_WORKSPACE_NAME"] ?? "Platform operations", settings["AF_BOOTSTRAP_WORKSPACE_SLUG"] ?? "platform-operations",
+        scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.Identity.RoleManager<Microsoft.AspNetCore.Identity.IdentityRole<Guid>>>(), CancellationToken.None);
+    if (result.Status != AutomataFlow.Infrastructure.Identity.AccountStatus.Ok)
+    {
+        Log.Error("Bootstrap refused: {Status} {Errors}", result.Status, result.Errors);
+        return 1;
+    }
+
+    Log.Information("Platform operator created {UserId} with workspace {OrganizationId}", result.Session!.UserId, result.Session.OrganizationId);
+    return 0;
+}
+
 app.UseExceptionHandler();
 app.UseStatusCodePages();
 app.UseSerilogRequestLogging();

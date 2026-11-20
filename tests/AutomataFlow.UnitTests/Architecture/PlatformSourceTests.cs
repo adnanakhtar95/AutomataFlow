@@ -8,6 +8,10 @@ public class PlatformSourceTests
     [
         // Sign-in lists the authenticated user's own memberships across organizations (always filtered by user id).
         "src/AutomataFlow.Infrastructure/Identity/AccountService.cs",
+        // Invitation preview/acceptance before sign-in: constrained by the hash of a 256-bit token the invitee holds (Phase 8).
+        "src/AutomataFlow.Infrastructure/Organizations/InvitationService.cs",
+        // Platform operators list workspaces with member and job COUNTS only (platform-operator policy, Phase 8).
+        "src/AutomataFlow.Infrastructure/Organizations/PlatformWorkspaceService.cs",
     ];
 
     private static IEnumerable<string> ProductionSources() =>
